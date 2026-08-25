@@ -1,0 +1,20 @@
+.continue
+.idea
+.vscode
+
+# Local configuration and secrets
+*.env
+configs/config.yaml
+
+# Build artifacts
+/bin/
+/main
+/main.exe
+/myapp
+/myapp.exe
+
+# Downloaded GAR XML datasets
+/source/xml/full/*
+/source/xml/delta/*
+!/source/xml/full/.gitignore
+!/source/xml/delta/.gitignore

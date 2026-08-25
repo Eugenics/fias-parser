@@ -1,0 +1,36 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: fias-postgres
+    environment:
+      POSTGRES_USER: $DB_USER
+      POSTGRES_PASSWORD: $DB_PASSWORD
+      POSTGRES_DB: $DB_NAME
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - fias-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $DB_USER -d $DB_NAME"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # gar_reader:
+  #   image: fias:dev
+  #   container_name: gar-reader-cli
+  #   # depends_on:
+  #   #   postgres:
+  #   #     condition: service_healthy
+  #   environment:
+  #     DB_HOST: postgres
+  #     DB_PORT: 5432
+  #     GAR_DATABASE_DSN: postgres://$DB_USER:$DB_PASSWORD@postgres:5432/$DB_NAME?sslmode=disable
+  #   volumes:
+  #     - ./configs:/app/configs
+  #     - ./source/xml:/app/source/xml
+  #   # profiles: ["cli"]
+  #   # command: ["help"]
+
+volumes:
+  fias-pgdata:
