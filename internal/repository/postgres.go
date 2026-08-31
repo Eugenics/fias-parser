@@ -55,7 +55,7 @@ func (r *PostgresRepository) SaveVersionInfo(ctx context.Context, info *download
 		VersionID:   info.VersionID,
 		TextVersion: info.TextVersion,
 		Status:      pgtype.Text{String: status, Valid: true},
-		FileType:    pgtype.Text{String: fileType, Valid: fileType != ""},
+		FileType:    pgtype.Text{String: fileType, Valid: fileType != ""}.String,
 	}
 
 	if url := firstNonEmpty(info.FiasCompleteXmlUrl, info.GarXMLFullURL); url != "" {

@@ -23,25 +23,7 @@ type ImporterConfig struct {
 }
 
 type FiasConfig struct {
-	URL         string `yaml:"url"`
-	AllInfoURL  string `yaml:"all_info_url"`
-	LastInfoURL string `yaml:"last_info_url"`
-	DeltaName   string `yaml:"delta_name"`
-	FullName    string `yaml:"full_name"`
-}
-
-func (f FiasConfig) FullZipName() string {
-	if f.FullName == "" {
-		return "gar_xml.zip"
-	}
-	return f.FullName
-}
-
-func (f FiasConfig) DeltaZipName() string {
-	if f.DeltaName == "" {
-		return "gar_delta_xml.zip"
-	}
-	return f.DeltaName
+	ArchivesDir string `yaml:"archives_dir"`
 }
 
 func Load(path string) (*Config, error) {

@@ -2,21 +2,17 @@ package download
 
 import (
 	"archive/zip"
-	"encoding/json"
-	"encoding/xml"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
-	"time"
 
 	config "gar_converter/internal/config"
 )
 
-// LastInfo is the response of the FIAS GetLastDownloadFileInfo web service.
-// The service returns JSON (and may historically have returned XML).
+// LastInfo contains GAR version metadata stored in version_info.
 type LastInfo struct {
 	VersionID          int64  `json:"VersionId" xml:"VersionId"`
 	TextVersion        string `json:"TextVersion" xml:"TextVersion"`
@@ -29,141 +25,83 @@ type LastInfo struct {
 }
 
 type Downloader struct {
-	cfg    config.FiasConfig
-	client *http.Client
+	cfg config.FiasConfig
 }
 
 func New(cfg config.FiasConfig) *Downloader {
-	return &Downloader{
-		cfg:    cfg,
-		client: &http.Client{Timeout: 30 * time.Minute},
-	}
+	return &Downloader{cfg: cfg}
 }
 
-// LastInfo fetches info about the latest GAR version from last_info_url.
-func (d *Downloader) LastInfo() (*LastInfo, error) {
-	if d.cfg.LastInfoURL == "" {
-		return nil, fmt.Errorf("fias.last_info_url is empty")
-	}
-
-	resp, err := d.client.Get(d.cfg.LastInfoURL)
-	if err != nil {
-		return nil, fmt.Errorf("get last info: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("get last info: unexpected status %s", resp.Status)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read last info: %w", err)
-	}
-
-	info := &LastInfo{}
-	if err := json.Unmarshal(body, info); err != nil {
-		if xerr := xml.Unmarshal(body, info); xerr != nil {
-			return nil, fmt.Errorf("decode last info: json: %v; xml: %v", err, xerr)
-		}
-	}
-	return info, nil
+// Full extracts the latest full GAR XML archive produced by fias-downloader.
+func (d *Downloader) Full(dest string) (int64, error) {
+	return d.extractLatest("full", dest)
 }
 
-// Full downloads the full GAR XML archive and extracts it into dest.
-func (d *Downloader) Full(dest string) error {
-	return d.downloadAndExtract(d.archiveURL(true), d.cfg.FullZipName(), dest)
+// Delta extracts the latest delta GAR XML archive produced by fias-downloader.
+func (d *Downloader) Delta(dest string) (int64, error) {
+	return d.extractLatest("delta", dest)
 }
 
-// Delta downloads the GAR delta XML archive and extracts it into dest.
-func (d *Downloader) Delta(dest string) error {
-	return d.downloadAndExtract(d.archiveURL(false), d.cfg.DeltaZipName(), dest)
-}
-
-// archiveURL returns the archive URL from the last download info (preferring
-// FiasCompleteXmlUrl/FiasDeltaXmlUrl), falling back to fias.url + archive
-// name when the info service is unavailable.
-func (d *Downloader) archiveURL(full bool) string {
-	if info, err := d.LastInfo(); err == nil {
-		if full {
-			if info.FiasCompleteXmlUrl != "" {
-				return info.FiasCompleteXmlUrl
-			}
-			if info.GarXMLFullURL != "" {
-				return info.GarXMLFullURL
-			}
-		} else {
-			if info.FiasDeltaXmlUrl != "" {
-				return info.FiasDeltaXmlUrl
-			}
-			if info.GarXMLDeltaURL != "" {
-				return info.GarXMLDeltaURL
-			}
-		}
-	}
-	return ""
-}
-
-func (d *Downloader) downloadAndExtract(infoURL, fallbackName, dest string) error {
-	zipURL := infoURL
-	if zipURL == "" {
-		if d.cfg.URL == "" {
-			return fmt.Errorf("fias.url is empty and last info has no archive URL")
-		}
-		zipURL = strings.TrimRight(d.cfg.URL, "/") + "/" + fallbackName
-	}
-
-	fmt.Printf("Downloading %s\n", zipURL)
-
-	tmp, err := os.CreateTemp("", "gar_*.zip")
+func (d *Downloader) extractLatest(kind, dest string) (int64, error) {
+	archivePath, version, err := latestArchive(d.cfg.ArchivesDir, kind)
 	if err != nil {
-		return fmt.Errorf("create temp file: %w", err)
+		return 0, err
 	}
-	tmpName := tmp.Name()
-	defer os.Remove(tmpName)
 
-	resp, err := d.client.Get(zipURL)
+	fmt.Printf("Extracting %s\n", archivePath)
+	zr, err := zip.OpenReader(archivePath)
 	if err != nil {
-		tmp.Close()
-		return fmt.Errorf("download %s: %w", zipURL, err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		tmp.Close()
-		return fmt.Errorf("download %s: unexpected status %s", zipURL, resp.Status)
-	}
-
-	if _, err := io.Copy(tmp, resp.Body); err != nil {
-		tmp.Close()
-		return fmt.Errorf("save %s: %w", zipURL, err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close temp file: %w", err)
-	}
-
-	zr, err := zip.OpenReader(tmpName)
-	if err != nil {
-		return fmt.Errorf("open archive %s: %w", zipURL, err)
+		return 0, fmt.Errorf("open archive %s: %w", archivePath, err)
 	}
 	defer zr.Close()
 
 	if err := os.RemoveAll(dest); err != nil {
-		return fmt.Errorf("clean %s: %w", dest, err)
+		return 0, fmt.Errorf("clean %s: %w", dest, err)
 	}
 	if err := os.MkdirAll(dest, 0o755); err != nil {
-		return fmt.Errorf("create %s: %w", dest, err)
+		return 0, fmt.Errorf("create %s: %w", dest, err)
 	}
 
 	if err := extractZip(&zr.Reader, dest); err != nil {
-		return fmt.Errorf("extract %s: %w", zipURL, err)
+		return 0, fmt.Errorf("extract %s: %w", archivePath, err)
 	}
 	if err := flattenSingleRootDir(dest); err != nil {
-		return fmt.Errorf("flatten %s: %w", dest, err)
+		return 0, fmt.Errorf("flatten %s: %w", dest, err)
 	}
 
 	fmt.Printf("Extracted to %s\n", dest)
-	return nil
+	return version, nil
+}
+
+// latestArchive finds the highest-version archive named <version>_<kind>.zip.
+func latestArchive(dir, kind string) (string, int64, error) {
+	if dir == "" {
+		return "", 0, fmt.Errorf("fias.archives_dir is empty")
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return "", 0, fmt.Errorf("read archives directory %s: %w", dir, err)
+	}
+
+	suffix := "_" + kind + ".zip"
+	var latestVersion int64 = -1
+	var latestName string
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), suffix) {
+			continue
+		}
+		versionText := strings.TrimSuffix(entry.Name(), suffix)
+		version, err := strconv.ParseInt(versionText, 10, 64)
+		if err != nil || version <= latestVersion {
+			continue
+		}
+		latestVersion = version
+		latestName = entry.Name()
+	}
+	if latestName == "" {
+		return "", 0, fmt.Errorf("%s archive not found in %s (expected <version>_%s.zip)", kind, dir, kind)
+	}
+	return filepath.Join(dir, latestName), latestVersion, nil
 }
 
 func extractZip(zr *zip.Reader, dest string) error {

@@ -20,7 +20,7 @@ const (
 	versionFileName   = "version.txt"
 )
 
-const usage = "Укажите тип загрузки: 0 - полная, 1 - дельта, 2 - скачать полные XML, 3 - скачать XML дельту, 4 - получить информацию о выгрузках"
+const usage = "Укажите тип загрузки: 0 - полная, 1 - дельта, 2 - распаковать полный архив, 3 - распаковать архив дельты"
 
 func main() {
 	timeStart := time.Now()
@@ -52,7 +52,7 @@ func main() {
 		if err := app.Run(XmlFilesFullPath); err != nil {
 			panic(err)
 		}
-		recordVersion(cfg, downloader, "imported", "full", fileVersionID, textVersion, dateText)
+		recordVersion(cfg, "imported", "full", fileVersionID, textVersion, dateText)
 
 	case "1":
 		fmt.Println("Дельта загрузка")
@@ -67,29 +67,23 @@ func main() {
 		if err := app.Run(XmlFilesDeltaPath); err != nil {
 			panic(err)
 		}
-		recordVersion(cfg, downloader, "imported", "delta", fileVersionID, textVersion, dateText)
+		recordVersion(cfg, "imported", "delta", fileVersionID, textVersion, dateText)
 
 	case "2":
-		fmt.Println("Скачивание полной выгрузки ГАР")
-		if err := downloader.Full(XmlFilesFullPath); err != nil {
-			panic(err)
-		}
-		recordVersion(cfg, downloader, "downloaded", "full", 0, "", "")
-
-	case "3":
-		fmt.Println("Скачивание дельты ГАР")
-		if err := downloader.Delta(XmlFilesDeltaPath); err != nil {
-			panic(err)
-		}
-		recordVersion(cfg, downloader, "downloaded", "delta", 0, "", "")
-
-	case "4":
-		fmt.Println("Получение информации о выгрузках ГАР")
-		info, err := downloader.LastInfo()
+		fmt.Println("Распаковка полной выгрузки ГАР")
+		versionID, err := downloader.Full(XmlFilesFullPath)
 		if err != nil {
 			panic(err)
 		}
-		printInfo(info)
+		recordVersion(cfg, "extracted", "full", versionID, "", "")
+
+	case "3":
+		fmt.Println("Распаковка дельты ГАР")
+		versionID, err := downloader.Delta(XmlFilesDeltaPath)
+		if err != nil {
+			panic(err)
+		}
+		recordVersion(cfg, "extracted", "delta", versionID, "", "")
 
 	default:
 		fmt.Println(usage)
@@ -98,14 +92,6 @@ func main() {
 
 	timeEnd := time.Now()
 	fmt.Printf("Execution time: %s\n", timeEnd.Sub(timeStart))
-}
-
-func printInfo(info *download.LastInfo) {
-	fmt.Printf("VersionId:     %d\n", info.VersionID)
-	fmt.Printf("TextVersion:   %s\n", info.TextVersion)
-	fmt.Printf("Date:          %s\n", info.Date)
-	fmt.Printf("GarXMLFullURL: %s\n", info.GarXMLFullURL)
-	fmt.Printf("GarXMLDeltaURL: %s\n", info.GarXMLDeltaURL)
 }
 
 // readVersionFile parses <dir>/version.txt. Line 1 is a date (e.g.
@@ -159,31 +145,17 @@ func versionImported(cfg *config.Config, versionID int64) bool {
 
 // recordVersion stores the version info into version_info. If fileVersionID
 // is non-zero (import modes), the version comes from version.txt; FIAS
-// metadata is used only when it reports the same version. Otherwise (download
-// modes) the latest FIAS info is used. fileType records the loaded file kind
+// fileType records the loaded file kind
 // ("full" or "delta").
-func recordVersion(cfg *config.Config, downloader *download.Downloader, status, fileType string, fileVersionID int64, textVersion, dateText string) {
+func recordVersion(cfg *config.Config, status, fileType string, fileVersionID int64, textVersion, dateText string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	info := &download.LastInfo{}
-	switch {
-	case fileVersionID != 0:
-		info = &download.LastInfo{VersionID: fileVersionID, TextVersion: textVersion, Date: dateText}
-		if latest, err := downloader.LastInfo(); err == nil && latest.VersionID == fileVersionID {
-			info = latest
-		} else if err != nil {
-			fmt.Printf("Не удалось получить информацию о версии с FIAS: %v\n", err)
-		}
-
-	default:
-		latest, err := downloader.LastInfo()
-		if err != nil {
-			fmt.Printf("Не удалось получить информацию о версии: %v\n", err)
-			return
-		}
-		info = latest
+	if fileVersionID == 0 {
+		fmt.Println("Не удалось определить локальную версию, запись версии пропущена")
+		return
 	}
+	info := &download.LastInfo{VersionID: fileVersionID, TextVersion: textVersion, Date: dateText}
 
 	repo, err := repository.NewPostgresRepository(ctx, cfg.Database.DSN)
 	if err != nil {

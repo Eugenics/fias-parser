@@ -1,7 +1,7 @@
-BINARY      := gar_reader
+BINARY      := fias-parser
 PKG         := ./...
 CMD_DIR     := .
-BIN_DIR     := ./bin
+BIN_DIR     := bin
 COVERAGE    := coverage.out
 
 GOFLAGS     ?=
@@ -10,6 +10,7 @@ LDFLAGS     ?= -s -w
 GOLANGCI_LINT_VERSION ?= v1.61.0
 SQLC_VERSION          ?= v1.31.1
 MIGRATE_VERSION       ?= v4.19.1
+GOIMPORTS_LOCAL       ?= gar_converter
 
 GOBIN ?= $(shell go env GOPATH)/bin
 
@@ -17,13 +18,13 @@ DB_URL ?= postgres://fias:fias@localhost:5432/fias?sslmode=disable
 
 .PHONY: help
 help:
-# 	@echo "Targets:"
+	@echo "Targets:"
 	@echo "  build          - build CLI binary into ./$(BIN_DIR)/$(BINARY)"
-# 	@echo "  test           - run tests with race detector"
-# 	@echo "  cover          - tests + coverage report"
-# 	@echo "  lint           - run golangci-lint"
-# 	@echo "  fmt            - gofmt + goimports"
-# 	@echo "  tidy           - go mod tidy"
+	@echo "  test           - run tests with race detector"
+	@echo "  cover          - tests + coverage report"
+	@echo "  lint           - run golangci-lint"
+	@echo "  fmt            - format Go sources"
+	@echo "  tidy           - update Go module files"
 	@echo "  sqlc           - regenerate sqlc code"
 	@echo "  db-setup       - compose-up + migrate-up + sqlc"
 	@echo "  migrate-up     - apply DB migrations (starts compose stack)"
@@ -33,38 +34,44 @@ help:
 	@echo "  docker-build   - build Docker image"
 	@echo "  compose-up     - start docker-compose stack"
 	@echo "  compose-down   - stop docker-compose stack"
-	@echo "  import-full   	- full import of gar data"
-	@echo "  import-delta  	- delta import of gar data"
-	@echo "  download-full  - download full GAR XML into source/xml/full"
-	@echo "  download-delta - download GAR XML delta into source/xml/delta"
-	@echo "  download-info  - show info about full/delta files from last_info_url"
-# 	@echo "  clean          - remove build artifacts"
+	@echo "  import-full    - import full XML data"
+	@echo "  import-delta   - import delta XML data"
+	@echo "  unpack-full    - unpack latest full archive into source/xml/full"
+	@echo "  unpack-delta   - unpack latest delta archive into source/xml/delta"
+	@echo "  load-full      - unpack and import latest full archive"
+	@echo "  load-delta     - unpack and import latest delta archive"
+	@echo "  clean          - remove build artifacts"
 
 .PHONY: build
 build:
 	@mkdir -p $(BIN_DIR)
-	@mkdir -p $(CMD_DIR)
 	go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(BINARY) $(CMD_DIR)
 
 .PHONY: import-full
-import-full:
-	go run $(CMD_DIR) 0
+import-full: build
+	$(BIN_DIR)/$(BINARY) 0
 
 .PHONY: import-delta
-import-delta:
-	go run $(CMD_DIR) 1
+import-delta: build
+	$(BIN_DIR)/$(BINARY) 1
 
-.PHONY: download-full
-download-full:
-	go run $(CMD_DIR) 2
+.PHONY: unpack-full
+unpack-full: build
+	$(BIN_DIR)/$(BINARY) 2
 
-.PHONY: download-delta
-download-delta:
-	go run $(CMD_DIR) 3
+.PHONY: unpack-delta
+unpack-delta: build
+	$(BIN_DIR)/$(BINARY) 3
 
-.PHONY: download-info
-download-info:
-	go run $(CMD_DIR) 4
+.PHONY: load-full
+load-full: build
+	$(BIN_DIR)/$(BINARY) 2
+	$(BIN_DIR)/$(BINARY) 0
+
+.PHONY: load-delta
+load-delta: build
+	$(BIN_DIR)/$(BINARY) 3
+	$(BIN_DIR)/$(BINARY) 1
 
 .PHONY: test
 test:
@@ -82,7 +89,7 @@ lint:
 .PHONY: fmt
 fmt:
 	gofmt -w .
-	goimports -w -local fias .
+	goimports -w -local $(GOIMPORTS_LOCAL) .
 
 .PHONY: tidy
 tidy:
@@ -112,7 +119,7 @@ migrate-new:
 .PHONY: tools
 tools:
 	go install github.com/golangci/golangci-lint/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
-	go install github.com/sqlc-dev/sqlc/cmd/sqlc@latest
+	go install github.com/sqlc-dev/sqlc/cmd/sqlc@$(SQLC_VERSION)
 	go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@$(MIGRATE_VERSION)
 
 .PHONY: docker-build
