@@ -62,7 +62,7 @@ func (d *Downloader) extractLatest(kind, dest string) (int64, error) {
 		return 0, fmt.Errorf("create %s: %w", dest, err)
 	}
 
-	if err := extractZip(&zr.Reader, dest); err != nil {
+	if err := extractZip(&zr.Reader, dest, d.cfg.ImportedFilePrefixes); err != nil {
 		return 0, fmt.Errorf("extract %s: %w", archivePath, err)
 	}
 	if err := flattenSingleRootDir(dest); err != nil {
@@ -104,20 +104,17 @@ func latestArchive(dir, kind string) (string, int64, error) {
 	return filepath.Join(dir, latestName), latestVersion, nil
 }
 
-func extractZip(zr *zip.Reader, dest string) error {
+func extractZip(zr *zip.Reader, dest string, importedFilePrefixes []string) error {
+	progress := newExtractionProgress(zr, importedFilePrefixes)
 	for _, f := range zr.File {
 		clean := filepath.Clean(filepath.FromSlash(f.Name))
 		if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) || filepath.IsAbs(clean) {
 			return fmt.Errorf("unsafe path in archive: %s", f.Name)
 		}
-		target := filepath.Join(dest, clean)
-
-		if f.FileInfo().IsDir() {
-			if err := os.MkdirAll(target, 0o755); err != nil {
-				return err
-			}
+		if f.FileInfo().IsDir() || !isImportedFile(filepath.Base(clean), importedFilePrefixes) {
 			continue
 		}
+		target := filepath.Join(dest, clean)
 
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 			return err
@@ -134,7 +131,7 @@ func extractZip(zr *zip.Reader, dest string) error {
 			return err
 		}
 
-		if _, err := io.Copy(out, rc); err != nil {
+		if _, err := io.Copy(out, io.TeeReader(rc, progress)); err != nil {
 			rc.Close()
 			out.Close()
 			return err
@@ -147,7 +144,94 @@ func extractZip(zr *zip.Reader, dest string) error {
 			return err
 		}
 	}
+	progress.finish()
 	return nil
+}
+
+type extractionProgress struct {
+	total       uint64
+	extracted   uint64
+	lastPercent int
+}
+
+func newExtractionProgress(zr *zip.Reader, importedFilePrefixes []string) *extractionProgress {
+	progress := &extractionProgress{lastPercent: -1}
+	for _, f := range zr.File {
+		if !f.FileInfo().IsDir() && isImportedFile(filepath.Base(filepath.FromSlash(f.Name)), importedFilePrefixes) {
+			progress.total += f.UncompressedSize64
+		}
+	}
+	return progress
+}
+
+func (p *extractionProgress) Write(data []byte) (int, error) {
+	p.extracted += uint64(len(data))
+	p.print(false)
+	return len(data), nil
+}
+
+func (p *extractionProgress) finish() {
+	p.print(true)
+	if p.total > 0 {
+		fmt.Println()
+	}
+}
+
+func (p *extractionProgress) print(force bool) {
+	if p.total == 0 {
+		return
+	}
+	percent := int(p.extracted * 100 / p.total)
+	if percent > 100 {
+		percent = 100
+	}
+	if !force && percent == p.lastPercent {
+		return
+	}
+	p.lastPercent = percent
+	fmt.Printf("\rExtracting: %3d%% (%s / %s)", percent, formatBytes(p.extracted), formatBytes(p.total))
+}
+
+func formatBytes(size uint64) string {
+	const (
+		kilobyte = 1024
+		megabyte = 1024 * kilobyte
+		gigabyte = 1024 * megabyte
+	)
+	switch {
+	case size >= gigabyte:
+		return fmt.Sprintf("%.1f GiB", float64(size)/gigabyte)
+	case size >= megabyte:
+		return fmt.Sprintf("%.1f MiB", float64(size)/megabyte)
+	case size >= kilobyte:
+		return fmt.Sprintf("%.1f KiB", float64(size)/kilobyte)
+	default:
+		return fmt.Sprintf("%d B", size)
+	}
+}
+
+func isImportedFile(name string, importedFilePrefixes []string) bool {
+	if strings.EqualFold(name, "version.txt") {
+		return true
+	}
+
+	upperName := strings.ToUpper(name)
+	if filepath.Ext(upperName) != ".XML" {
+		return false
+	}
+	for _, prefix := range importedFilePrefixes {
+		upperPrefix := strings.ToUpper(prefix)
+		if strings.HasPrefix(upperName, upperPrefix) {
+			remainder := strings.TrimPrefix(upperName, upperPrefix)
+			// GAR data file names put a date/version immediately after the
+			// entity name. This keeps similarly named unsupported entities,
+			// such as AS_ADDR_OBJ_DIVISION, out of the extraction result.
+			if len(remainder) > 0 && remainder[0] >= '0' && remainder[0] <= '9' {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // flattenSingleRootDir moves the contents of the single top-level directory

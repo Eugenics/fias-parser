@@ -23,7 +23,8 @@ type ImporterConfig struct {
 }
 
 type FiasConfig struct {
-	ArchivesDir string `yaml:"archives_dir"`
+	ArchivesDir          string   `yaml:"archives_dir"`
+	ImportedFilePrefixes []string `yaml:"imported_file_prefixes"`
 }
 
 func Load(path string) (*Config, error) {
