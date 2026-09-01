@@ -14,6 +14,14 @@ SELECT EXISTS(
     WHERE version_id = $1 AND status = 'imported'
 );
 
+-- name: ExtractionBlocker :one
+SELECT version_id, status
+FROM version_info
+WHERE (version_id = $1 AND status IN ('extracted', 'imported'))
+   OR (version_id <> $1 AND status = 'extracted' AND file_type = $2)
+ORDER BY (version_id = $1) DESC, updated_at DESC
+LIMIT 1;
+
 -- name: UpsertVersionInfo :exec
 INSERT INTO version_info (version_id, text_version, gar_xml_full_url, gar_xml_delta_url, exp_date, date, status, file_type)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)

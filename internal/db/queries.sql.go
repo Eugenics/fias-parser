@@ -23,6 +23,27 @@ func (q *Queries) CountAddressObjects(ctx context.Context) (int64, error) {
 	return count, err
 }
 
+const extractionBlocker = `-- name: ExtractionBlocker :one
+SELECT version_id, status
+FROM version_info
+WHERE (version_id = $1 AND status IN ('extracted', 'imported'))
+   OR (version_id <> $1 AND status = 'extracted' AND file_type = $2)
+ORDER BY (version_id = $1) DESC, updated_at DESC
+LIMIT 1
+`
+
+type ExtractionBlockerRow struct {
+	VersionID int64       `json:"version_id"`
+	Status    pgtype.Text `json:"status"`
+}
+
+func (q *Queries) ExtractionBlocker(ctx context.Context, versionID int64, fileType string) (ExtractionBlockerRow, error) {
+	row := q.db.QueryRow(ctx, extractionBlocker, versionID, fileType)
+	var i ExtractionBlockerRow
+	err := row.Scan(&i.VersionID, &i.Status)
+	return i, err
+}
+
 const getVersionInfo = `-- name: GetVersionInfo :one
 SELECT id, version_id, text_version, gar_xml_full_url, gar_xml_delta_url, exp_date, date, created_at, updated_at, status, file_type
 FROM version_info

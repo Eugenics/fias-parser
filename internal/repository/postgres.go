@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -78,6 +79,19 @@ func (r *PostgresRepository) SaveVersionInfo(ctx context.Context, info *download
 // imported into the DB (status = 'imported').
 func (r *PostgresRepository) IsVersionImported(ctx context.Context, versionID int64) (bool, error) {
 	return db.New(r.pool).VersionImported(ctx, versionID)
+}
+
+// ExtractionBlocker returns an already processed version that prevents a new
+// extraction. The selected version takes priority over other pending versions.
+func (r *PostgresRepository) ExtractionBlocker(ctx context.Context, versionID int64, fileType string) (int64, string, bool, error) {
+	row, err := db.New(r.pool).ExtractionBlocker(ctx, versionID, fileType)
+	if err == pgx.ErrNoRows {
+		return 0, "", false, nil
+	}
+	if err != nil {
+		return 0, "", false, err
+	}
+	return row.VersionID, row.Status.String, true, nil
 }
 
 func firstNonEmpty(values ...string) string {

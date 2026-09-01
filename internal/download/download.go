@@ -28,49 +28,72 @@ type Downloader struct {
 	cfg config.FiasConfig
 }
 
+type ExtractResult struct {
+	VersionID   int64
+	ArchivePath string
+}
+
 func New(cfg config.FiasConfig) *Downloader {
 	return &Downloader{cfg: cfg}
 }
 
 // Full extracts the latest full GAR XML archive produced by fias-downloader.
-func (d *Downloader) Full(dest string) (int64, error) {
+func (d *Downloader) Full(dest string) (ExtractResult, error) {
 	return d.extractLatest("full", dest)
 }
 
 // Delta extracts the latest delta GAR XML archive produced by fias-downloader.
-func (d *Downloader) Delta(dest string) (int64, error) {
+func (d *Downloader) Delta(dest string) (ExtractResult, error) {
 	return d.extractLatest("delta", dest)
 }
 
-func (d *Downloader) extractLatest(kind, dest string) (int64, error) {
+func (d *Downloader) Latest(kind string) (ExtractResult, error) {
 	archivePath, version, err := latestArchive(d.cfg.ArchivesDir, kind)
 	if err != nil {
-		return 0, err
+		return ExtractResult{}, err
 	}
+	return ExtractResult{VersionID: version, ArchivePath: archivePath}, nil
+}
 
-	fmt.Printf("Extracting %s\n", archivePath)
-	zr, err := zip.OpenReader(archivePath)
+func (d *Downloader) Extract(result ExtractResult, dest string) error {
+	return d.extract(result, dest)
+}
+
+func (d *Downloader) extractLatest(kind, dest string) (ExtractResult, error) {
+	result, err := d.Latest(kind)
 	if err != nil {
-		return 0, fmt.Errorf("open archive %s: %w", archivePath, err)
+		return ExtractResult{}, err
+	}
+	if err := d.extract(result, dest); err != nil {
+		return ExtractResult{}, err
+	}
+	return result, nil
+}
+
+func (d *Downloader) extract(result ExtractResult, dest string) error {
+	fmt.Printf("Extracting %s\n", result.ArchivePath)
+	zr, err := zip.OpenReader(result.ArchivePath)
+	if err != nil {
+		return fmt.Errorf("open archive %s: %w", result.ArchivePath, err)
 	}
 	defer zr.Close()
 
 	if err := os.RemoveAll(dest); err != nil {
-		return 0, fmt.Errorf("clean %s: %w", dest, err)
+		return fmt.Errorf("clean %s: %w", dest, err)
 	}
 	if err := os.MkdirAll(dest, 0o755); err != nil {
-		return 0, fmt.Errorf("create %s: %w", dest, err)
+		return fmt.Errorf("create %s: %w", dest, err)
 	}
 
 	if err := extractZip(&zr.Reader, dest, d.cfg.ImportedFilePrefixes); err != nil {
-		return 0, fmt.Errorf("extract %s: %w", archivePath, err)
+		return fmt.Errorf("extract %s: %w", result.ArchivePath, err)
 	}
 	if err := flattenSingleRootDir(dest); err != nil {
-		return 0, fmt.Errorf("flatten %s: %w", dest, err)
+		return fmt.Errorf("flatten %s: %w", dest, err)
 	}
 
 	fmt.Printf("Extracted to %s\n", dest)
-	return version, nil
+	return nil
 }
 
 // latestArchive finds the highest-version archive named <version>_<kind>.zip.

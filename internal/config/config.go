@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"time"
 
 	yaml "gopkg.in/yaml.v3"
 )
@@ -23,8 +24,10 @@ type ImporterConfig struct {
 }
 
 type FiasConfig struct {
-	ArchivesDir          string   `yaml:"archives_dir"`
-	ImportedFilePrefixes []string `yaml:"imported_file_prefixes"`
+	ArchivesDir          string        `yaml:"archives_dir"`
+	ImportedFilePrefixes []string      `yaml:"imported_file_prefixes"`
+	ExpDelta             time.Duration `yaml:"-"`
+	ExpDeltaText         string        `yaml:"exp_delta"`
 }
 
 func Load(path string) (*Config, error) {
@@ -38,6 +41,14 @@ func Load(path string) (*Config, error) {
 	}
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	cfg.Fias.ExpDelta = 7 * 24 * time.Hour
+	if cfg.Fias.ExpDeltaText != "" {
+		expDelta, err := time.ParseDuration(cfg.Fias.ExpDeltaText)
+		if err != nil {
+			return nil, fmt.Errorf("parse fias.exp_delta: %w", err)
+		}
+		cfg.Fias.ExpDelta = expDelta
 	}
 
 	if cfg.Database.DSN == "" {

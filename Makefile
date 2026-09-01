@@ -38,6 +38,8 @@ help:
 	@echo "  import-delta   - import delta XML data"
 	@echo "  unpack-full    - unpack latest full archive into source/xml/full"
 	@echo "  unpack-delta   - unpack latest delta archive into source/xml/delta"
+	@echo "  unpack-all     - unpack latest full and delta archives"
+	@echo "  import-all     - import full XML data, then delta XML data"
 	@echo "  load-full      - unpack and import latest full archive"
 	@echo "  load-delta     - unpack and import latest delta archive"
 	@echo "  clean          - remove build artifacts"
@@ -62,6 +64,16 @@ unpack-full: build
 .PHONY: unpack-delta
 unpack-delta: build
 	$(BIN_DIR)/$(BINARY) 3
+
+.PHONY: unpack-all
+unpack-all: build
+	$(BIN_DIR)/$(BINARY) 2
+	$(BIN_DIR)/$(BINARY) 3
+
+.PHONY: import-all
+import-all: build
+	$(BIN_DIR)/$(BINARY) 0
+	$(BIN_DIR)/$(BINARY) 1
 
 .PHONY: load-full
 load-full: build
