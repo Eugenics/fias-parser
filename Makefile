@@ -14,7 +14,11 @@ GOIMPORTS_LOCAL       ?= gar_converter
 
 GOBIN ?= $(shell go env GOPATH)/bin
 
-DB_URL ?= postgres://fias:fias@localhost:5432/fias?sslmode=disable
+DB_PORT=5434
+DB_USER=fias
+DB_PASSWORD=fias
+DB_NAME=fias
+DB_URL ?= postgres://$(DB_USER):$(DB_PASSWORD)@localhost:$(DB_PORT)/$(DB_NAME)?sslmode=disable
 
 .PHONY: help
 help:

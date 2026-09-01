@@ -1,5 +1,5 @@
 services:
-  postgres:
+  fias-parser-postgres:
     image: postgres:16-alpine
     container_name: fias-postgres
     environment:
@@ -16,19 +16,7 @@ services:
       timeout: 3s
       retries: 10
 
-  migrate:
-    image: migrate/migrate:v4.19.1
-    depends_on:
-      postgres:
-        condition: service_healthy
-    volumes:
-      - ../migrations:/migrations:ro
-    command:
-      - -path=/migrations
-      - -database=postgres://${DB_USER}:${DB_PASSWORD}@postgres:5432/${DB_NAME}?sslmode=disable
-      - up
-
-  fias-parser:
+  fias-parser-scheduler:
     image: fias-parser:dev
     build:
       context: ..
@@ -36,8 +24,8 @@ services:
     container_name: fias-parser
     restart: unless-stopped
     depends_on:
-      migrate:
-        condition: service_completed_successfully
+      fias-parser-postgres:
+        condition: service_healthy
     environment:
       TZ: ${TZ:-Asia/Novosibirsk}
       GAR_DATABASE_DSN: postgres://${DB_USER}:${DB_PASSWORD}@postgres:5432/${DB_NAME}?sslmode=disable
