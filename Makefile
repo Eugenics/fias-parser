@@ -34,6 +34,7 @@ help:
 	@echo "  docker-build   - build Docker image"
 	@echo "  compose-up     - start docker-compose stack"
 	@echo "  compose-down   - stop docker-compose stack"
+	@echo "  compose-logs   - follow parser scheduler logs"
 	@echo "  import-full    - import full XML data"
 	@echo "  import-delta   - import delta XML data"
 	@echo "  unpack-full    - unpack latest full archive into source/xml/full"
@@ -145,6 +146,10 @@ compose-up:
 .PHONY: compose-down
 compose-down:
 	docker compose -f deployments/docker-compose.yml down
+
+.PHONY: compose-logs
+compose-logs:
+	docker compose -f deployments/docker-compose.yml logs -f fias-parser
 
 .PHONY: clean
 clean:

@@ -11,6 +11,7 @@ CLI-утилита на Go для распаковки локальных ZIP-а
 - запись информации о загруженной версии в таблицу `version_info`;
 - контроль состояний `extracted` и `imported` отдельно для полной и дельта-выгрузки;
 - прекращение импорта при ошибке XML или записи в PostgreSQL.
+- запуск распаковки и импорта full/delta по cron-расписанию в Docker.
 
 ## Архитектура и модули
 
@@ -170,6 +171,28 @@ make migrate-new NAME=add_example_field
 make sqlc
 make compose-down
 ```
+
+`make compose-up` запускает PostgreSQL, применяет миграции, собирает и запускает
+постоянный контейнер `fias-parser`. По умолчанию полная выгрузка обрабатывается по воскресеньям в
+02:00, дельта — ежедневно в 03:00 (часовой пояс `Asia/Novosibirsk`). Каждая
+задача сначала распаковывает последний локальный архив, затем импортирует его.
+Одновременный запуск двух задач блокируется.
+
+Расписание и каталог архивов задаются в `deployments/.env`:
+
+```dotenv
+FIAS_ARCHIVES_DIR=../../fias-downloader/var/data/downloads
+TZ=Asia/Novosibirsk
+FULL_SCHEDULE=0 2 * * 0
+DELTA_SCHEDULE=0 3 * * *
+RUN_ON_STARTUP=false
+STARTUP_LOAD_TYPE=delta
+```
+
+Значения `FULL_SCHEDULE` и `DELTA_SCHEDULE` используют стандартные пять полей
+cron. Чтобы немедленно выполнить одну загрузку при старте контейнера, установите
+`RUN_ON_STARTUP=true` и выберите `STARTUP_LOAD_TYPE=full` или `delta`. Логи
+планировщика и импорта доступны через `make compose-logs`.
 
 По умолчанию команды миграций используют `DB_URL`. При необходимости передайте собственную строку подключения:
 

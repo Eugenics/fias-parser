@@ -1,0 +1,10 @@
+.git
+.idea
+.vscode
+bin
+coverage.out
+configs/config.yaml
+deployments/.env
+source/xml
+*.zip
+*.part

@@ -1,0 +1,23 @@
+database:
+  dsn: ""
+
+importer:
+  batch_size: 1000
+  workers: 4
+
+fias:
+  archives_dir: /archives
+  exp_delta: 168h
+  imported_file_prefixes:
+    - AS_ADDR_OBJ_
+    - AS_ADDR_OBJ_PARAMS_
+    - AS_ADM_HIERARCHY_
+    - AS_HOUSE_TYPES_
+    - AS_ADDR_OBJ_TYPES_
+    - AS_APARTMENT_TYPES_
+    - AS_NORMATIVE_DOCS_KINDS_
+    - AS_NORMATIVE_DOCS_TYPES_
+    - AS_OBJECT_LEVELS_
+    - AS_OPERATION_TYPES_
+    - AS_PARAM_TYPES_
+    - AS_ROOM_TYPES_

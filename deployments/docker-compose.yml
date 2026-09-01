@@ -16,21 +16,39 @@ services:
       timeout: 3s
       retries: 10
 
-  # gar_reader:
-  #   image: fias:dev
-  #   container_name: gar-reader-cli
-  #   # depends_on:
-  #   #   postgres:
-  #   #     condition: service_healthy
-  #   environment:
-  #     DB_HOST: postgres
-  #     DB_PORT: 5432
-  #     GAR_DATABASE_DSN: postgres://$DB_USER:$DB_PASSWORD@postgres:5432/$DB_NAME?sslmode=disable
-  #   volumes:
-  #     - ./configs:/app/configs
-  #     - ./source/xml:/app/source/xml
-  #   # profiles: ["cli"]
-  #   # command: ["help"]
+  migrate:
+    image: migrate/migrate:v4.19.1
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ../migrations:/migrations:ro
+    command:
+      - -path=/migrations
+      - -database=postgres://${DB_USER}:${DB_PASSWORD}@postgres:5432/${DB_NAME}?sslmode=disable
+      - up
+
+  fias-parser:
+    image: fias-parser:dev
+    build:
+      context: ..
+      dockerfile: build/package/Dockerfile
+    container_name: fias-parser
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      TZ: ${TZ:-Asia/Novosibirsk}
+      GAR_DATABASE_DSN: postgres://${DB_USER}:${DB_PASSWORD}@postgres:5432/${DB_NAME}?sslmode=disable
+      FULL_SCHEDULE: ${FULL_SCHEDULE:-0 2 * * 0}
+      DELTA_SCHEDULE: ${DELTA_SCHEDULE:-0 3 * * *}
+      RUN_ON_STARTUP: ${RUN_ON_STARTUP:-false}
+      STARTUP_LOAD_TYPE: ${STARTUP_LOAD_TYPE:-delta}
+    volumes:
+      - ./parser-config.yaml:/app/configs/config.yaml:ro
+      - ${FIAS_ARCHIVES_DIR:-../../fias-downloader/var/data/downloads}:/archives:ro
+      - ../source/xml:/app/source/xml
 
 volumes:
   fias-pgdata:
