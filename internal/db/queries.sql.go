@@ -26,19 +26,24 @@ func (q *Queries) CountAddressObjects(ctx context.Context) (int64, error) {
 const extractionBlocker = `-- name: ExtractionBlocker :one
 SELECT version_id, status
 FROM version_info
-WHERE (version_id = $1 AND status IN ('extracted', 'imported'))
+WHERE (version_id = $1 AND file_type = $2 AND status IN ('extracted', 'imported'))
    OR (version_id <> $1 AND status = 'extracted' AND file_type = $2)
-ORDER BY (version_id = $1) DESC, updated_at DESC
+ORDER BY (version_id = $1 AND file_type = $2) DESC, updated_at DESC
 LIMIT 1
 `
+
+type ExtractionBlockerParams struct {
+	VersionID int64  `json:"version_id"`
+	FileType  string `json:"file_type"`
+}
 
 type ExtractionBlockerRow struct {
 	VersionID int64       `json:"version_id"`
 	Status    pgtype.Text `json:"status"`
 }
 
-func (q *Queries) ExtractionBlocker(ctx context.Context, versionID int64, fileType string) (ExtractionBlockerRow, error) {
-	row := q.db.QueryRow(ctx, extractionBlocker, versionID, fileType)
+func (q *Queries) ExtractionBlocker(ctx context.Context, arg ExtractionBlockerParams) (ExtractionBlockerRow, error) {
+	row := q.db.QueryRow(ctx, extractionBlocker, arg.VersionID, arg.FileType)
 	var i ExtractionBlockerRow
 	err := row.Scan(&i.VersionID, &i.Status)
 	return i, err
@@ -47,11 +52,16 @@ func (q *Queries) ExtractionBlocker(ctx context.Context, versionID int64, fileTy
 const getVersionInfo = `-- name: GetVersionInfo :one
 SELECT id, version_id, text_version, gar_xml_full_url, gar_xml_delta_url, exp_date, date, created_at, updated_at, status, file_type
 FROM version_info
-WHERE version_id = $1
+WHERE version_id = $1 AND file_type = $2
 `
 
-func (q *Queries) GetVersionInfo(ctx context.Context, versionID int64) (VersionInfo, error) {
-	row := q.db.QueryRow(ctx, getVersionInfo, versionID)
+type GetVersionInfoParams struct {
+	VersionID int64  `json:"version_id"`
+	FileType  string `json:"file_type"`
+}
+
+func (q *Queries) GetVersionInfo(ctx context.Context, arg GetVersionInfoParams) (VersionInfo, error) {
+	row := q.db.QueryRow(ctx, getVersionInfo, arg.VersionID, arg.FileType)
 	var i VersionInfo
 	err := row.Scan(
 		&i.ID,
@@ -69,14 +79,33 @@ func (q *Queries) GetVersionInfo(ctx context.Context, versionID int64) (VersionI
 	return i, err
 }
 
+const markVersionImported = `-- name: MarkVersionImported :execrows
+UPDATE version_info
+SET status = 'imported', updated_at = now()
+WHERE version_id = $1 AND file_type = $2
+`
+
+type MarkVersionImportedParams struct {
+	VersionID int64  `json:"version_id"`
+	FileType  string `json:"file_type"`
+}
+
+func (q *Queries) MarkVersionImported(ctx context.Context, arg MarkVersionImportedParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markVersionImported, arg.VersionID, arg.FileType)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const upsertVersionInfo = `-- name: UpsertVersionInfo :exec
 INSERT INTO version_info (version_id, text_version, gar_xml_full_url, gar_xml_delta_url, exp_date, date, status, file_type)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-ON CONFLICT (version_id) DO UPDATE
+ON CONFLICT (version_id, file_type) DO UPDATE
 SET text_version      = EXCLUDED.text_version,
-    gar_xml_full_url  = EXCLUDED.gar_xml_full_url,
-    gar_xml_delta_url = EXCLUDED.gar_xml_delta_url,
-    exp_date          = EXCLUDED.exp_date,
+    gar_xml_full_url  = COALESCE(EXCLUDED.gar_xml_full_url, version_info.gar_xml_full_url),
+    gar_xml_delta_url = COALESCE(EXCLUDED.gar_xml_delta_url, version_info.gar_xml_delta_url),
+    exp_date          = COALESCE(EXCLUDED.exp_date, version_info.exp_date),
     date              = EXCLUDED.date,
     status            = EXCLUDED.status,
     file_type         = EXCLUDED.file_type,
@@ -112,12 +141,17 @@ const versionImported = `-- name: VersionImported :one
 SELECT EXISTS(
     SELECT 1
     FROM version_info
-    WHERE version_id = $1 AND status = 'imported'
+    WHERE version_id = $1 AND file_type = $2 AND status = 'imported'
 )
 `
 
-func (q *Queries) VersionImported(ctx context.Context, versionID int64) (bool, error) {
-	row := q.db.QueryRow(ctx, versionImported, versionID)
+type VersionImportedParams struct {
+	VersionID int64  `json:"version_id"`
+	FileType  string `json:"file_type"`
+}
+
+func (q *Queries) VersionImported(ctx context.Context, arg VersionImportedParams) (bool, error) {
+	row := q.db.QueryRow(ctx, versionImported, arg.VersionID, arg.FileType)
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err

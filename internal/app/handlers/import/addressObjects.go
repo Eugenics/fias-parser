@@ -2,24 +2,15 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"gar_converter/internal/config"
 	"gar_converter/internal/domain"
 	"gar_converter/internal/repository"
 
 	"github.com/jackc/pgx/v5"
 )
 
-func ImportAddressObjects(ctx *context.Context, config *config.Config, batch []interface{}) {
-	// Create Postgres repository
-	pgRepo, err := repository.NewPostgresRepository(*ctx,
-		config.Database.DSN)
-	if err != nil {
-		fmt.Printf("Error creating Postgres repository: %v\n", err)
-		return
-	}
-	defer pgRepo.Close()
-
+func ImportAddressObjects(ctx context.Context, pgRepo *repository.PostgresRepository, batch []interface{}) error {
 	fmt.Println("Start import address objects...")
 	fmt.Println("Total address objects to import:", len(batch))
 
@@ -30,7 +21,7 @@ func ImportAddressObjects(ctx *context.Context, config *config.Config, batch []i
 			pgxBatch.Queue(`
         insert into address_objects
 			(id, object_id, object_guid, change_id, name, type_name, level, oper_type_id, prev_id,
-            	next_id, update_date, start_date, end_date, is_actual, is_active)
+             next_id, update_date, start_date, end_date, is_actual, is_active)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
         ON CONFLICT (id) DO UPDATE SET
 			object_id=$2,
@@ -68,15 +59,17 @@ func ImportAddressObjects(ctx *context.Context, config *config.Config, batch []i
 		}
 	}
 
-	br := pgRepo.Pool().SendBatch(*ctx, &pgxBatch)
-	defer br.Close()
+	br := pgRepo.Pool().SendBatch(ctx, &pgxBatch)
+	var batchErr error
 
 	for range batch {
 		if _, err := br.Exec(); err != nil {
+			batchErr = errors.Join(batchErr, err)
 			fmt.Printf("Batch insert address objects error: %s\n", err)
 			continue
 		}
 	}
 
 	fmt.Println("Address objects batch import completed...")
+	return errors.Join(batchErr, br.Close())
 }

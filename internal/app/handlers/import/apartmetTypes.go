@@ -2,24 +2,15 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"gar_converter/internal/config"
 	"gar_converter/internal/domain"
 	"gar_converter/internal/repository"
 
 	"github.com/jackc/pgx/v5"
 )
 
-func ImportApartmentTypes(ctx *context.Context, config *config.Config, batch []interface{}) {
-	// Create Postgres repository
-	pgRepo, err := repository.NewPostgresRepository(*ctx,
-		config.Database.DSN)
-	if err != nil {
-		fmt.Printf("Error creating Postgres repository: %v\n", err)
-		return
-	}
-	defer pgRepo.Close()
-
+func ImportApartmentTypes(ctx context.Context, pgRepo *repository.PostgresRepository, batch []interface{}) error {
 	fmt.Printf("Start import %s...\n", GetBatchTypeStr(batch[0]))
 	fmt.Println("Total apartment types rows to import:", len(batch))
 
@@ -28,8 +19,8 @@ func ImportApartmentTypes(ctx *context.Context, config *config.Config, batch []i
 	for _, item := range batch {
 		if ao, ok := item.(*domain.ApartmentType); ok {
 			pgxBatch.Queue(`
-       insert into apartment_types 
-	   	(id, name, short_name, "desc", is_active, start_date, end_date, update_date)
+       insert into apartment_types
+            (id, name, short_name, "desc", is_active, update_date, start_date, end_date)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         ON CONFLICT (id) DO UPDATE SET
 			name=$2,
@@ -53,15 +44,17 @@ func ImportApartmentTypes(ctx *context.Context, config *config.Config, batch []i
 		}
 	}
 
-	br := pgRepo.Pool().SendBatch(*ctx, &pgxBatch)
-	defer br.Close()
+	br := pgRepo.Pool().SendBatch(ctx, &pgxBatch)
+	var batchErr error
 
 	for range batch {
 		if _, err := br.Exec(); err != nil {
+			batchErr = errors.Join(batchErr, err)
 			fmt.Printf("Batch apartment type insert error %s\n", err)
 			continue
 		}
 	}
 
 	fmt.Printf("%s batch import completed... \n", GetBatchTypeStr(batch[0]))
+	return errors.Join(batchErr, br.Close())
 }

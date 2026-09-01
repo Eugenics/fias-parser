@@ -2,24 +2,15 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"gar_converter/internal/config"
 	"gar_converter/internal/domain"
 	"gar_converter/internal/repository"
 
 	"github.com/jackc/pgx/v5"
 )
 
-func ImportParams(ctx *context.Context, config *config.Config, batch []interface{}) {
-	// Create Postgres repository
-	pgRepo, err := repository.NewPostgresRepository(*ctx,
-		config.Database.DSN)
-	if err != nil {
-		fmt.Printf("Error creating Postgres repository: %v\n", err)
-		return
-	}
-	defer pgRepo.Close()
-
+func ImportParams(ctx context.Context, pgRepo *repository.PostgresRepository, batch []interface{}) error {
 	fmt.Println("Start import params...")
 	fmt.Println("Total params rows to import:", len(batch))
 
@@ -28,7 +19,7 @@ func ImportParams(ctx *context.Context, config *config.Config, batch []interface
 	for _, item := range batch {
 		if ao, ok := item.(*domain.Param); ok {
 			pgxBatch.Queue(`
-        insert into params 
+        insert into params
 			(id, object_id, change_id, change_id_end, type_id, "value", update_date, start_date, end_date)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         ON CONFLICT (id) DO UPDATE SET
@@ -55,15 +46,17 @@ func ImportParams(ctx *context.Context, config *config.Config, batch []interface
 		}
 	}
 
-	br := pgRepo.Pool().SendBatch(*ctx, &pgxBatch)
-	defer br.Close()
+	br := pgRepo.Pool().SendBatch(ctx, &pgxBatch)
+	var batchErr error
 
 	for range batch {
 		if _, err := br.Exec(); err != nil {
+			batchErr = errors.Join(batchErr, err)
 			fmt.Printf("Batch insert error params %s\n", err)
 			continue
 		}
 	}
 
 	fmt.Println("Params batch import completed...")
+	return errors.Join(batchErr, br.Close())
 }

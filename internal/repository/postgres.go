@@ -17,8 +17,15 @@ type PostgresRepository struct {
 	pool *pgxpool.Pool
 }
 
-func NewPostgresRepository(ctx context.Context, dsn string) (*PostgresRepository, error) {
-	pool, err := pgxpool.New(ctx, dsn)
+func NewPostgresRepository(ctx context.Context, dsn string, maxConns ...int32) (*PostgresRepository, error) {
+	poolConfig, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse database config: %w", err)
+	}
+	if len(maxConns) > 0 && maxConns[0] > 0 {
+		poolConfig.MaxConns = maxConns[0]
+	}
+	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create connection pool: %w", err)
 	}
@@ -37,7 +44,7 @@ func (r *PostgresRepository) Pool() *pgxpool.Pool {
 	return r.pool
 }
 
-var dateLayouts = []string{"2006-01-02", "2006.01.02", "02.01.2006"}
+var dateLayouts = []string{"2006-01-02", "2006.01.02", "02.01.2006", "20060102"}
 
 var timeLayouts = []string{
 	time.RFC3339,
@@ -77,14 +84,25 @@ func (r *PostgresRepository) SaveVersionInfo(ctx context.Context, info *download
 
 // IsVersionImported reports whether the given version has already been
 // imported into the DB (status = 'imported').
-func (r *PostgresRepository) IsVersionImported(ctx context.Context, versionID int64) (bool, error) {
-	return db.New(r.pool).VersionImported(ctx, versionID)
+func (r *PostgresRepository) IsVersionImported(ctx context.Context, versionID int64, fileType string) (bool, error) {
+	return db.New(r.pool).VersionImported(ctx, db.VersionImportedParams{VersionID: versionID, FileType: fileType})
+}
+
+func (r *PostgresRepository) MarkVersionImported(ctx context.Context, versionID int64, fileType string) error {
+	rows, err := db.New(r.pool).MarkVersionImported(ctx, db.MarkVersionImportedParams{VersionID: versionID, FileType: fileType})
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return fmt.Errorf("version %d (%s) is not registered as extracted", versionID, fileType)
+	}
+	return nil
 }
 
 // ExtractionBlocker returns an already processed version that prevents a new
 // extraction. The selected version takes priority over other pending versions.
 func (r *PostgresRepository) ExtractionBlocker(ctx context.Context, versionID int64, fileType string) (int64, string, bool, error) {
-	row, err := db.New(r.pool).ExtractionBlocker(ctx, versionID, fileType)
+	row, err := db.New(r.pool).ExtractionBlocker(ctx, db.ExtractionBlockerParams{VersionID: versionID, FileType: fileType})
 	if err == pgx.ErrNoRows {
 		return 0, "", false, nil
 	}

@@ -3,6 +3,8 @@ package app
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 )
 
 // Region represents a geographical region containing XML files.
@@ -32,22 +34,23 @@ func ReadDirectory(path string) ([]os.DirEntry, error) {
 
 // Reads the XML files from the specified directory and organizes them into a structured format.
 // It returns a slice of Region structs, each containing the region's name and a list of XML files associated with that region.
-func GetStucturedData(xmlFilesPath string) []Region {
+func GetStructuredData(xmlFilesPath string) ([]Region, error) {
 
 	// Read the main directory to get the list of regions
 	regions, err := ReadDirectory(xmlFilesPath)
 	if err != nil {
 		fmt.Printf("read directory: %s", err)
-		return nil
+		return nil, fmt.Errorf("read XML directory: %w", err)
 	}
 
 	if len(regions) == 0 {
 		fmt.Println("No regions found.")
-		return nil
+		return nil, fmt.Errorf("XML directory %s is empty", xmlFilesPath)
 	}
 
 	// Process each region directory and collect XML file information
 	regionsFiles := []Region{}
+	fileCount := 0
 	refStruct := Region{
 		ID:       len(regionsFiles) + 1,
 		Name:     "00",
@@ -68,7 +71,7 @@ func GetStucturedData(xmlFilesPath string) []Region {
 			files, err := ReadDirectory(xmlFilesPath + "/" + region.Name())
 			if err != nil {
 				fmt.Printf("Error reading directory for region %s: %v\n", region.Name(), err)
-				continue
+				return nil, fmt.Errorf("read region %s: %w", region.Name(), err)
 			}
 			if len(files) == 0 {
 				fmt.Printf("No XML files found in region %s.\n", region.Name())
@@ -77,12 +80,13 @@ func GetStucturedData(xmlFilesPath string) []Region {
 
 			// Process each XML file and add it to the region struct
 			for _, file := range files {
-				if !file.IsDir() {
+				if !file.IsDir() && strings.EqualFold(filepath.Ext(file.Name()), ".xml") {
 					xmlFile := XMLFile{
 						Name: file.Name(),
 						Path: xmlFilesPath + "/" + region.Name() + "/" + file.Name(),
 					}
 					regionsStruct.XmlFiles = append(regionsStruct.XmlFiles, xmlFile)
+					fileCount++
 					fmt.Printf("Added XML file: %s\n", xmlFile.Path)
 				}
 			}
@@ -90,7 +94,7 @@ func GetStucturedData(xmlFilesPath string) []Region {
 			// Append the region struct to the regionsFiles slice
 			regionsFiles = append(regionsFiles, regionsStruct)
 
-		} else {
+		} else if strings.EqualFold(filepath.Ext(region.Name()), ".xml") {
 			fmt.Printf("Processing files in folder : %s\n", xmlFilesPath)
 
 			// regionStruct := findRegionByName(regionsFiles, "00")
@@ -111,13 +115,17 @@ func GetStucturedData(xmlFilesPath string) []Region {
 				Path: xmlFilesPath + "/" + region.Name(),
 			}
 			refStruct.XmlFiles = append(refStruct.XmlFiles, xmlFile)
+			fileCount++
 			fmt.Printf("Added XML file: %s\n", xmlFile.Path)
 		}
 	}
 
 	regionsFiles = append(regionsFiles, refStruct)
+	if fileCount == 0 {
+		return nil, fmt.Errorf("no XML files found in %s", xmlFilesPath)
+	}
 
-	return regionsFiles
+	return regionsFiles, nil
 }
 
 func findRegionByName(regions []Region, name string) *Region {

@@ -8,9 +8,11 @@ import (
 	"gar_converter/internal/download"
 	"gar_converter/internal/repository"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -24,6 +26,8 @@ const usage = "Укажите тип загрузки: 0 - полная, 1 - д�
 
 func main() {
 	timeStart := time.Now()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	cfg, err := config.Load("./configs/config.yaml")
 	if err != nil {
@@ -31,6 +35,11 @@ func main() {
 	}
 
 	downloader := download.New(cfg.Fias)
+	repo, err := repository.NewPostgresRepository(ctx, cfg.Database.DSN, int32(cfg.Importer.Workers))
+	if err != nil {
+		panic(fmt.Sprintf("Не удалось подключиться к БД: %v", err))
+	}
+	defer repo.Close()
 
 	args := os.Args[1:]
 	if len(args) == 0 {
@@ -41,33 +50,37 @@ func main() {
 	switch args[0] {
 	case "0":
 		fmt.Println("Полная загрузка")
-		fileVersionID, textVersion, dateText, hasVersion := readVersionFile(XmlFilesFullPath)
-		if hasVersion && versionImported(cfg, fileVersionID) {
+		fileVersionID, _, _, hasVersion := readVersionFile(XmlFilesFullPath)
+		if hasVersion && versionImported(ctx, repo, fileVersionID, "full") {
 			fmt.Printf("Версия %d уже импортирована в БД, импорт пропущен\n", fileVersionID)
 			break
 		}
 		if !hasVersion {
-			fmt.Println("Версия выгрузки: файл version.txt не найден, проверка пропущена")
+			panic("файл version.txt отсутствует или содержит некорректную дату")
 		}
-		if err := app.Run(XmlFilesFullPath); err != nil {
+		if err := app.Run(ctx, XmlFilesFullPath, cfg, repo); err != nil {
 			panic(err)
 		}
-		recordVersion(cfg, "imported", "full", fileVersionID, textVersion, dateText)
+		if err := markVersionImported(ctx, repo, fileVersionID, "full"); err != nil {
+			panic(err)
+		}
 
 	case "1":
 		fmt.Println("Дельта загрузка")
-		fileVersionID, textVersion, dateText, hasVersion := readVersionFile(XmlFilesDeltaPath)
-		if hasVersion && versionImported(cfg, fileVersionID) {
+		fileVersionID, _, _, hasVersion := readVersionFile(XmlFilesDeltaPath)
+		if hasVersion && versionImported(ctx, repo, fileVersionID, "delta") {
 			fmt.Printf("Версия %d уже импортирована в БД, импорт пропущен\n", fileVersionID)
 			break
 		}
 		if !hasVersion {
-			fmt.Println("Версия выгрузки: файл version.txt не найден, проверка пропущена")
+			panic("файл version.txt отсутствует или содержит некорректную дату")
 		}
-		if err := app.Run(XmlFilesDeltaPath); err != nil {
+		if err := app.Run(ctx, XmlFilesDeltaPath, cfg, repo); err != nil {
 			panic(err)
 		}
-		recordVersion(cfg, "imported", "delta", fileVersionID, textVersion, dateText)
+		if err := markVersionImported(ctx, repo, fileVersionID, "delta"); err != nil {
+			panic(err)
+		}
 
 	case "2":
 		fmt.Println("Распаковка полной выгрузки ГАР")
@@ -75,13 +88,15 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
-		if extractionBlocked(cfg, result.VersionID, "full") {
+		if extractionBlocked(ctx, repo, result.VersionID, "full") {
 			break
 		}
 		if err := downloader.Extract(result, XmlFilesFullPath); err != nil {
 			panic(err)
 		}
-		recordExtractedVersion(cfg, "full", XmlFilesFullPath, result)
+		if err := recordExtractedVersion(ctx, repo, cfg, "full", XmlFilesFullPath, result); err != nil {
+			panic(err)
+		}
 
 	case "3":
 		fmt.Println("Распаковка дельты ГАР")
@@ -89,13 +104,15 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
-		if extractionBlocked(cfg, result.VersionID, "delta") {
+		if extractionBlocked(ctx, repo, result.VersionID, "delta") {
 			break
 		}
 		if err := downloader.Extract(result, XmlFilesDeltaPath); err != nil {
 			panic(err)
 		}
-		recordExtractedVersion(cfg, "delta", XmlFilesDeltaPath, result)
+		if err := recordExtractedVersion(ctx, repo, cfg, "delta", XmlFilesDeltaPath, result); err != nil {
+			panic(err)
+		}
 
 	default:
 		fmt.Println(usage)
@@ -106,16 +123,7 @@ func main() {
 	fmt.Printf("Execution time: %s\n", timeEnd.Sub(timeStart))
 }
 
-func extractionBlocked(cfg *config.Config, versionID int64, fileType string) bool {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	repo, err := repository.NewPostgresRepository(ctx, cfg.Database.DSN)
-	if err != nil {
-		panic(fmt.Sprintf("Не удалось подключиться к БД для проверки распаковки: %v", err))
-	}
-	defer repo.Close()
-
+func extractionBlocked(ctx context.Context, repo *repository.PostgresRepository, versionID int64, fileType string) bool {
 	blockingVersion, status, blocked, err := repo.ExtractionBlocker(ctx, versionID, fileType)
 	if err != nil {
 		panic(fmt.Sprintf("Не удалось проверить распакованные версии: %v", err))
@@ -160,11 +168,11 @@ func readVersionFile(dir string) (versionID int64, textVersion, dateText string,
 	return 0, "", "", false
 }
 
-func recordExtractedVersion(cfg *config.Config, fileType, dir string, result download.ExtractResult) {
+func recordExtractedVersion(ctx context.Context, repo *repository.PostgresRepository, cfg *config.Config, fileType, dir string, result download.ExtractResult) error {
 	versionID, _, dateText, ok := readVersionFile(dir)
 	if !ok {
 		fmt.Println("Не удалось прочитать дату из version.txt, запись версии пропущена")
-		return
+		return fmt.Errorf("не удалось прочитать дату из %s", filepath.Join(dir, versionFileName))
 	}
 
 	info := &download.LastInfo{
@@ -178,56 +186,30 @@ func recordExtractedVersion(cfg *config.Config, fileType, dir string, result dow
 	} else {
 		info.GarXMLDeltaURL = result.ArchivePath
 	}
-	recordVersionInfo(cfg, "extracted", fileType, info)
+	if err := repo.SaveVersionInfo(ctx, info, "extracted", fileType); err != nil {
+		return fmt.Errorf("записать распакованную версию: %w", err)
+	}
+	return nil
 }
 
 // versionImported reports whether the given version has already been imported
 // into the DB. DB failures are fatal: better to abort than to silently re-run
 // an expensive import.
-func versionImported(cfg *config.Config, versionID int64) bool {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	repo, err := repository.NewPostgresRepository(ctx, cfg.Database.DSN)
-	if err != nil {
-		panic(fmt.Sprintf("Не удалось подключиться к БД для проверки версии: %v", err))
-	}
-	defer repo.Close()
-
-	imported, err := repo.IsVersionImported(ctx, versionID)
+func versionImported(ctx context.Context, repo *repository.PostgresRepository, versionID int64, fileType string) bool {
+	imported, err := repo.IsVersionImported(ctx, versionID, fileType)
 	if err != nil {
 		panic(fmt.Sprintf("Не удалось проверить версию в БД: %v", err))
 	}
 	return imported
 }
 
-// recordVersion stores the version info into version_info. If fileVersionID
-// is non-zero (import modes), the version comes from version.txt; FIAS
-// fileType records the loaded file kind
-// ("full" or "delta").
-func recordVersion(cfg *config.Config, status, fileType string, fileVersionID int64, textVersion, dateText string) {
+func markVersionImported(ctx context.Context, repo *repository.PostgresRepository, fileVersionID int64, fileType string) error {
 	if fileVersionID == 0 {
-		fmt.Println("Не удалось определить локальную версию, запись версии пропущена")
-		return
+		return fmt.Errorf("не удалось определить локальную версию")
 	}
-	info := &download.LastInfo{VersionID: fileVersionID, TextVersion: textVersion, Date: dateText}
-	recordVersionInfo(cfg, status, fileType, info)
-}
-
-func recordVersionInfo(cfg *config.Config, status, fileType string, info *download.LastInfo) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	repo, err := repository.NewPostgresRepository(ctx, cfg.Database.DSN)
-	if err != nil {
-		fmt.Printf("Не удалось подключиться к БД для записи версии: %v\n", err)
-		return
+	if err := repo.MarkVersionImported(ctx, fileVersionID, fileType); err != nil {
+		return fmt.Errorf("отметить версию импортированной: %w", err)
 	}
-	defer repo.Close()
-
-	if err := repo.SaveVersionInfo(ctx, info, status, fileType); err != nil {
-		fmt.Printf("Не удалось записать версию в БД: %v\n", err)
-		return
-	}
-	fmt.Printf("Версия %d (%s) записана в БД (status=%s)\n", info.VersionID, info.TextVersion, status)
+	fmt.Printf("Версия %d импортирована\n", fileVersionID)
+	return nil
 }

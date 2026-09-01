@@ -2,24 +2,15 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"gar_converter/internal/config"
 	"gar_converter/internal/domain"
 	"gar_converter/internal/repository"
 
 	"github.com/jackc/pgx/v5"
 )
 
-func ImportNdocKind(ctx *context.Context, config *config.Config, batch []interface{}) {
-	// Create Postgres repository
-	pgRepo, err := repository.NewPostgresRepository(*ctx,
-		config.Database.DSN)
-	if err != nil {
-		fmt.Printf("Error creating Postgres repository: %v\n", err)
-		return
-	}
-	defer pgRepo.Close()
-
+func ImportNdocKind(ctx context.Context, pgRepo *repository.PostgresRepository, batch []interface{}) error {
 	fmt.Printf("Start import %s...\n", GetBatchTypeStr(batch[0]))
 	fmt.Println("Total ndocKinds rows to import:", len(batch))
 
@@ -40,15 +31,17 @@ func ImportNdocKind(ctx *context.Context, config *config.Config, batch []interfa
 		}
 	}
 
-	br := pgRepo.Pool().SendBatch(*ctx, &pgxBatch)
-	defer br.Close()
+	br := pgRepo.Pool().SendBatch(ctx, &pgxBatch)
+	var batchErr error
 
 	for range batch {
 		if _, err := br.Exec(); err != nil {
+			batchErr = errors.Join(batchErr, err)
 			fmt.Printf("Batch ndockind insert error %s\n", err)
 			continue
 		}
 	}
 
 	fmt.Printf("%s batch import completed... \n", GetBatchTypeStr(batch[0]))
+	return errors.Join(batchErr, br.Close())
 }

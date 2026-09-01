@@ -1,52 +1,41 @@
 package app
 
 import (
+	"context"
 	"fmt"
-	config "gar_converter/internal/config"
-	"sync"
+
+	"gar_converter/internal/config"
+	"gar_converter/internal/repository"
+
+	"golang.org/x/sync/errgroup"
 )
 
-type Cwg struct {
-	wg    sync.WaitGroup
-	count int
-}
-
-func Run(xmlFilesPath string) error {
+func Run(ctx context.Context, xmlFilesPath string, cfg *config.Config, repo *repository.PostgresRepository) error {
 	fmt.Println("Starting GAR converter...")
-	fmt.Println("Loading structured data from configuration...")
-	data := GetStucturedData(xmlFilesPath)
-
-	// Load configuration
-	config, err := config.Load("./configs/config.yaml")
+	data, err := GetStructuredData(xmlFilesPath)
 	if err != nil {
-		return fmt.Errorf("load config: %w", err)
+		return err
 	}
-	var workers = config.Importer.Workers
 
-	var wg sync.WaitGroup
-	sem := make(chan struct{}, workers)
-
+	group, groupCtx := errgroup.WithContext(ctx)
+	group.SetLimit(cfg.Importer.Workers)
 	for _, region := range data {
-		for _, xmlFile := range region.XmlFiles {
-			sem <- struct{}{}
-			wg.Add(1)
-			go func(b XMLFile) {
-				defer wg.Done()
-				defer func() { <-sem }()
-				ReadXmlFile(xmlFile.Path)
-			}(xmlFile)
+		for _, file := range region.XmlFiles {
+			file := file
+			group.Go(func() error {
+				if err := ReadXMLFile(groupCtx, file.Path, cfg, repo); err != nil {
+					return fmt.Errorf("import %s: %w", file.Path, err)
+				}
+				return nil
+			})
 		}
 	}
-
-	wg.Wait()
-	return nil
+	return group.Wait()
 }
 
-// UniqueSlice accepts any slice where elements are comparable
 func UniqueSlice[T comparable](input []T) []T {
 	seen := make(map[T]struct{})
 	distinct := make([]T, 0, len(input))
-
 	for _, val := range input {
 		if _, ok := seen[val]; !ok {
 			seen[val] = struct{}{}

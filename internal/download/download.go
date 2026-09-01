@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	config "gar_converter/internal/config"
 )
@@ -78,21 +79,76 @@ func (d *Downloader) extract(result ExtractResult, dest string) error {
 	}
 	defer zr.Close()
 
-	if err := os.RemoveAll(dest); err != nil {
-		return fmt.Errorf("clean %s: %w", dest, err)
+	parent := filepath.Dir(dest)
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		return fmt.Errorf("create parent %s: %w", parent, err)
 	}
-	if err := os.MkdirAll(dest, 0o755); err != nil {
-		return fmt.Errorf("create %s: %w", dest, err)
+	tempDir, err := os.MkdirTemp(parent, "."+filepath.Base(dest)+"-extract-")
+	if err != nil {
+		return fmt.Errorf("create extraction directory: %w", err)
 	}
+	defer os.RemoveAll(tempDir)
 
-	if err := extractZip(&zr.Reader, dest, d.cfg.ImportedFilePrefixes); err != nil {
+	if err := extractZip(&zr.Reader, tempDir, d.cfg.ImportedFilePrefixes); err != nil {
 		return fmt.Errorf("extract %s: %w", result.ArchivePath, err)
 	}
-	if err := flattenSingleRootDir(dest); err != nil {
-		return fmt.Errorf("flatten %s: %w", dest, err)
+	if err := flattenSingleRootDir(tempDir); err != nil {
+		return fmt.Errorf("flatten %s: %w", tempDir, err)
+	}
+	if err := validateExtractedVersion(tempDir, result.VersionID); err != nil {
+		return fmt.Errorf("validate %s: %w", result.ArchivePath, err)
+	}
+	if err := replaceDirectory(tempDir, dest); err != nil {
+		return err
 	}
 
 	fmt.Printf("Extracted to %s\n", dest)
+	return nil
+}
+
+func validateExtractedVersion(dir string, expected int64) error {
+	data, err := os.ReadFile(filepath.Join(dir, "version.txt"))
+	if err != nil {
+		return fmt.Errorf("read version.txt: %w", err)
+	}
+	dateText := strings.TrimSpace(strings.SplitN(string(data), "\n", 2)[0])
+	for _, layout := range []string{"2006.01.02", "2006-01-02", "02.01.2006", "20060102"} {
+		parsed, err := time.Parse(layout, dateText)
+		if err != nil {
+			continue
+		}
+		actual, _ := strconv.ParseInt(parsed.Format("20060102"), 10, 64)
+		if actual != expected {
+			return fmt.Errorf("version.txt contains %d, archive name contains %d", actual, expected)
+		}
+		return nil
+	}
+	return fmt.Errorf("unsupported date %q in version.txt", dateText)
+}
+
+func replaceDirectory(source, dest string) error {
+	backup := source + ".previous"
+	hadDest := false
+	if _, err := os.Stat(dest); err == nil {
+		hadDest = true
+		if err := os.Rename(dest, backup); err != nil {
+			return fmt.Errorf("move previous directory %s: %w", dest, err)
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("inspect %s: %w", dest, err)
+	}
+
+	if err := os.Rename(source, dest); err != nil {
+		if hadDest {
+			_ = os.Rename(backup, dest)
+		}
+		return fmt.Errorf("activate extracted directory %s: %w", dest, err)
+	}
+	if hadDest {
+		if err := os.RemoveAll(backup); err != nil {
+			fmt.Printf("Warning: could not remove previous directory %s: %v\n", backup, err)
+		}
+	}
 	return nil
 }
 

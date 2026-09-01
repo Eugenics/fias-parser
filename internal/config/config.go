@@ -59,5 +59,11 @@ func Load(path string) (*Config, error) {
 	if cfg.Database.DSN == "" {
 		return nil, fmt.Errorf("database.dsn is required")
 	}
+	if cfg.Importer.BatchSize <= 0 {
+		return nil, fmt.Errorf("importer.batch_size must be greater than zero")
+	}
+	if cfg.Importer.Workers <= 0 {
+		return nil, fmt.Errorf("importer.workers must be greater than zero")
+	}
 	return cfg, nil
 }

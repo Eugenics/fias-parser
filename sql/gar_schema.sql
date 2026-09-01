@@ -227,9 +227,7 @@ create table version_info
 (
     id                serial
         primary key,
-    version_id        bigint                                 not null
-        constraint uq_version_id
-            unique,
+    version_id        bigint                                 not null,
     text_version      text                                   not null,
     gar_xml_full_url  text,
     gar_xml_delta_url text,
@@ -238,8 +236,11 @@ create table version_info
     created_at        timestamp with time zone default now() not null,
     updated_at        timestamp with time zone default now() not null,
     status            text,
-    file_type         text
+    file_type         text                                   not null
 );
+
+alter table version_info
+    add constraint uq_version_id_file_type unique (version_id, file_type);
 
 alter table version_info
     owner to fias;

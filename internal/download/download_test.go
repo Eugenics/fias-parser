@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"gar_converter/internal/config"
 )
 
 func TestLatestArchiveSelectsHighestVersionOfRequestedKind(t *testing.T) {
@@ -95,5 +97,78 @@ func TestExtractZipExtractsOnlyImportedFilesAndVersion(t *testing.T) {
 		if wantExtracted && string(got) != contents {
 			t.Errorf("contents of %s = %q, want %q", name, got, contents)
 		}
+	}
+}
+
+func TestExtractKeepsPreviousDirectoryWhenVersionIsInvalid(t *testing.T) {
+	root := t.TempDir()
+	dest := filepath.Join(root, "full")
+	if err := os.MkdirAll(dest, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dest, "previous.xml"), []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	archivePath := filepath.Join(root, "20260831_full.zip")
+	writeTestArchive(t, archivePath, "20260830")
+
+	d := New(config.FiasConfig{ImportedFilePrefixes: []string{"AS_ADDR_OBJ_"}})
+	err := d.Extract(ExtractResult{VersionID: 20260831, ArchivePath: archivePath}, dest)
+	if err == nil {
+		t.Fatal("expected version mismatch error")
+	}
+	if data, readErr := os.ReadFile(filepath.Join(dest, "previous.xml")); readErr != nil || string(data) != "old" {
+		t.Fatalf("previous directory was changed: data=%q err=%v", data, readErr)
+	}
+}
+
+func TestExtractReplacesDirectoryAfterValidation(t *testing.T) {
+	root := t.TempDir()
+	dest := filepath.Join(root, "full")
+	if err := os.MkdirAll(dest, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dest, "previous.xml"), []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	archivePath := filepath.Join(root, "20260831_full.zip")
+	writeTestArchive(t, archivePath, "20260831")
+
+	d := New(config.FiasConfig{ImportedFilePrefixes: []string{"AS_ADDR_OBJ_"}})
+	if err := d.Extract(ExtractResult{VersionID: 20260831, ArchivePath: archivePath}, dest); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dest, "previous.xml")); !os.IsNotExist(err) {
+		t.Fatalf("previous file still exists: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dest, "01", "AS_ADDR_OBJ_20260831_test.XML")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeTestArchive(t *testing.T, path, version string) {
+	t.Helper()
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zw := zip.NewWriter(file)
+	for name, contents := range map[string]string{
+		"gar_xml/version.txt":                      version,
+		"gar_xml/01/AS_ADDR_OBJ_20260831_test.XML": "<ROOT/>",
+	} {
+		writer, err := zw.Create(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := writer.Write([]byte(contents)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
 	}
 }
