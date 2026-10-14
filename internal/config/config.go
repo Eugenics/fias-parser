@@ -12,6 +12,13 @@ type Config struct {
 	Database DatabaseConfig `yaml:"database"`
 	Importer ImporterConfig `yaml:"importer"`
 	Fias     FiasConfig     `yaml:"fias"`
+	RabbitMQ RabbitMQConfig `yaml:"rabbitmq"`
+}
+
+type RabbitMQConfig struct {
+	Mode  string `yaml:"mode"`
+	URL   string `yaml:"url"`
+	Queue string `yaml:"queue"`
 }
 
 type DatabaseConfig struct {
@@ -38,6 +45,7 @@ func Load(path string) (*Config, error) {
 
 	cfg := &Config{
 		Importer: ImporterConfig{BatchSize: 1000, Workers: 4},
+		RabbitMQ: RabbitMQConfig{Mode: "local", Queue: "fias.download.completed"},
 	}
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
@@ -56,6 +64,9 @@ func Load(path string) (*Config, error) {
 			cfg.Database.DSN = dsn
 		}
 	}
+	if url := os.Getenv("RABBITMQ_URL"); url != "" {
+		cfg.RabbitMQ.URL = url
+	}
 	if cfg.Database.DSN == "" {
 		return nil, fmt.Errorf("database.dsn is required")
 	}
@@ -64,6 +75,12 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.Importer.Workers <= 0 {
 		return nil, fmt.Errorf("importer.workers must be greater than zero")
+	}
+	if cfg.RabbitMQ.Mode != "local" && cfg.RabbitMQ.Mode != "rabbitmq" {
+		return nil, fmt.Errorf("rabbitmq.mode must be local or rabbitmq")
+	}
+	if cfg.RabbitMQ.Mode == "rabbitmq" && cfg.RabbitMQ.URL == "" {
+		return nil, fmt.Errorf("rabbitmq.url is required in rabbitmq mode")
 	}
 	return cfg, nil
 }

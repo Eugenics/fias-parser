@@ -1,6 +1,8 @@
 #!/bin/sh
 set -eu
 
+cd /app
+
 load_type=${1:-}
 lock_dir=/tmp/fias-parser-job.lock
 
@@ -17,8 +19,7 @@ case "$load_type" in
         fias-parser 0
         ;;
     delta)
-        fias-parser 3
-        fias-parser 1
+        fias-parser 5
         ;;
     *)
         echo "unknown load type: $load_type" >&2

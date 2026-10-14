@@ -19,7 +19,7 @@ validate_schedule() {
 
 if [ "${1:-}" = "crond" ]; then
     FULL_SCHEDULE=${FULL_SCHEDULE:-0 2 * * 0}
-    DELTA_SCHEDULE=${DELTA_SCHEDULE:-0 3 * * *}
+    DELTA_SCHEDULE=${DELTA_SCHEDULE:-*/5 * * * *}
     validate_schedule FULL_SCHEDULE "$FULL_SCHEDULE"
     validate_schedule DELTA_SCHEDULE "$DELTA_SCHEDULE"
 

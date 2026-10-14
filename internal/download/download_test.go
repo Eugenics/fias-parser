@@ -3,6 +3,7 @@ package download
 import (
 	"archive/zip"
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -40,6 +41,43 @@ func TestLatestArchiveReportsMissingKind(t *testing.T) {
 	dir := t.TempDir()
 	if _, _, err := latestArchive(dir, "delta"); err == nil {
 		t.Fatal("expected an error when delta archive is absent")
+	}
+}
+
+func TestArchivesReturnsRequestedKindInAscendingVersionOrder(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{
+		"20260911_delta.zip",
+		"20260901_delta.zip",
+		"20260908_delta.zip",
+		"20260904_delta.zip",
+		"20260912_full.zip",
+		"20260913_delta.zip.part",
+		"gar_delta.zip",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	d := New(config.FiasConfig{ArchivesDir: dir})
+	got, err := d.Archives("delta")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wantVersions := []int64{20260901, 20260904, 20260908, 20260911}
+	if len(got) != len(wantVersions) {
+		t.Fatalf("archive count = %d, want %d", len(got), len(wantVersions))
+	}
+	for i, wantVersion := range wantVersions {
+		if got[i].VersionID != wantVersion {
+			t.Errorf("archive %d version = %d, want %d", i, got[i].VersionID, wantVersion)
+		}
+		wantPath := filepath.Join(dir, fmt.Sprintf("%d_delta.zip", wantVersion))
+		if got[i].ArchivePath != wantPath {
+			t.Errorf("archive %d path = %q, want %q", i, got[i].ArchivePath, wantPath)
+		}
 	}
 }
 

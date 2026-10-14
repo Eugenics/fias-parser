@@ -30,55 +30,22 @@ help:
 	@echo "  fmt            - format Go sources"
 	@echo "  tidy           - update Go module files"
 	@echo "  sqlc           - regenerate sqlc code"
-	@echo "  db-setup       - compose-up + migrate-up + sqlc"
 	@echo "  migrate-up     - apply DB migrations (starts compose stack)"
 	@echo "  migrate-down   - revert last DB migration"
 	@echo "  migrate-new    - create new migration (NAME=...)"
 	@echo "  tools          - install dev tools (golangci-lint, sqlc, migrate)"
-	@echo "  docker-build   - build Docker image"
+	@echo "  docker-build   - rebuild image and recreate Compose containers"
 	@echo "  compose-up     - start docker-compose stack"
 	@echo "  compose-down   - stop docker-compose stack"
 	@echo "  compose-logs   - follow parser scheduler logs"
-	@echo "  import-full    - import full XML data"
-	@echo "  import-delta   - import delta XML data"
-	@echo "  unpack-full    - unpack latest full archive into source/xml/full"
-	@echo "  unpack-delta   - unpack latest delta archive into source/xml/delta"
-	@echo "  unpack-all     - unpack latest full and delta archives"
-	@echo "  import-all     - import full XML data, then delta XML data"
 	@echo "  load-full      - unpack and import latest full archive"
-	@echo "  load-delta     - unpack and import latest delta archive"
+	@echo "  load-delta     - unpack and import pending deltas (local) or full/delta events (RabbitMQ)"
 	@echo "  clean          - remove build artifacts"
 
 .PHONY: build
 build:
 	@mkdir -p $(BIN_DIR)
 	go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(BINARY) $(CMD_DIR)
-
-.PHONY: import-full
-import-full: build
-	$(BIN_DIR)/$(BINARY) 0
-
-.PHONY: import-delta
-import-delta: build
-	$(BIN_DIR)/$(BINARY) 1
-
-.PHONY: unpack-full
-unpack-full: build
-	$(BIN_DIR)/$(BINARY) 2
-
-.PHONY: unpack-delta
-unpack-delta: build
-	$(BIN_DIR)/$(BINARY) 3
-
-.PHONY: unpack-all
-unpack-all: build
-	$(BIN_DIR)/$(BINARY) 2
-	$(BIN_DIR)/$(BINARY) 3
-
-.PHONY: import-all
-import-all: build
-	$(BIN_DIR)/$(BINARY) 0
-	$(BIN_DIR)/$(BINARY) 1
 
 .PHONY: load-full
 load-full: build
@@ -87,8 +54,7 @@ load-full: build
 
 .PHONY: load-delta
 load-delta: build
-	$(BIN_DIR)/$(BINARY) 3
-	$(BIN_DIR)/$(BINARY) 1
+	$(BIN_DIR)/$(BINARY) 5
 
 .PHONY: test
 test:
@@ -116,10 +82,6 @@ tidy:
 sqlc:
 	$(GOBIN)/sqlc generate
 
-.PHONY: db-setup
-db-setup: compose-up migrate-up sqlc
-	@echo "DB ready: migrations applied, sqlc code generated"
-
 .PHONY: migrate-up
 migrate-up: compose-up
 	$(GOBIN)/migrate -path migrations -database "$(DB_URL)" up
@@ -141,19 +103,19 @@ tools:
 
 .PHONY: docker-build
 docker-build:
-	docker build -t $(BINARY):dev -f build/package/Dockerfile .
+	docker compose -f deployments/docker-compose.yaml --env-file deployments/.env up -d --build --force-recreate
 
 .PHONY: compose-up
 compose-up:
-	docker compose -f deployments/docker-compose.yml up -d
+	docker compose -f deployments/docker-compose.yaml up -d
 
 .PHONY: compose-down
 compose-down:
-	docker compose -f deployments/docker-compose.yml down
+	docker compose -f deployments/docker-compose.yaml down
 
 .PHONY: compose-logs
 compose-logs:
-	docker compose -f deployments/docker-compose.yml logs -f fias-parser
+	docker compose -f deployments/docker-compose.yaml logs -f fias-parser-scheduler
 
 .PHONY: clean
 clean:

@@ -9,16 +9,14 @@ go build -o myapp main.go        # build from repo root
 ./compile_linux.bat              # cross-compile GOOS=linux GOARCH=amd64 → myapp
 ./compile_win.bat                # cross-compile → myapp.exe
 make build                       # builds bin/gar_reader
-make import-full                 # go run . 0 — full import
-make import-delta                # go run . 1 — delta import
 make download-full               # go run . 2 — download full GAR XML to source/xml/full
-make download-delta              # go run . 3 — download GAR XML delta to source/xml/delta
+make load-delta                  # bin/fias-parser 5 — import pending deltas oldest first
 make compose-up                  # start local Postgres (requires deployments/.env)
 make lint / test / cover / fmt   # need golangci-lint tool; fmt uses goimports -local fias
 ```
 
 ## Data flow
-- `main.go` — XML paths (`./source/xml/full`, `./source/xml/delta`); arg `0` full import, `1` delta import, `2`/`3` download full/delta XML, `4` print last-version info from FIAS (Russian usage otherwise).
+- `main.go` — XML paths (`./source/xml/full`, `./source/xml/delta`); arg `0` full import, `1` delta import, `2`/`3` unpack latest local full/delta archive, `5` import all pending deltas oldest first (Russian usage otherwise).
 - `internal/app/support.go` — `GetStucturedData` walks `<path>/<region>/*.XML`; files placed directly in `<path>/` (no region subdir) get assigned to a pseudo-region `"00"`.
 - `internal/app/app.go` — one goroutine per XML file, limited by `config.Importer.Workers` semaphore (`app.go:27`).
 - `internal/app/xml.go` → `Handle` → `internal/app/handlers/import/*` — one parser handler per XML entity type (`addressObjects.go`, `params.go`, `admHierarchyItems.go`, etc.).

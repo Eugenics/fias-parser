@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -30,8 +31,9 @@ type Downloader struct {
 }
 
 type ExtractResult struct {
-	VersionID   int64
-	ArchivePath string
+	VersionID         int64
+	ArchivePath       string
+	SourceArchivePath string
 }
 
 func New(cfg config.FiasConfig) *Downloader {
@@ -54,6 +56,11 @@ func (d *Downloader) Latest(kind string) (ExtractResult, error) {
 		return ExtractResult{}, err
 	}
 	return ExtractResult{VersionID: version, ArchivePath: archivePath}, nil
+}
+
+// Archives returns all local archives of the requested kind ordered by version.
+func (d *Downloader) Archives(kind string) ([]ExtractResult, error) {
+	return archives(d.cfg.ArchivesDir, kind)
 }
 
 func (d *Downloader) Extract(result ExtractResult, dest string) error {
@@ -154,33 +161,46 @@ func replaceDirectory(source, dest string) error {
 
 // latestArchive finds the highest-version archive named <version>_<kind>.zip.
 func latestArchive(dir, kind string) (string, int64, error) {
+	results, err := archives(dir, kind)
+	if err != nil {
+		return "", 0, err
+	}
+	latest := results[len(results)-1]
+	return latest.ArchivePath, latest.VersionID, nil
+}
+
+func archives(dir, kind string) ([]ExtractResult, error) {
 	if dir == "" {
-		return "", 0, fmt.Errorf("fias.archives_dir is empty")
+		return nil, fmt.Errorf("fias.archives_dir is empty")
 	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return "", 0, fmt.Errorf("read archives directory %s: %w", dir, err)
+		return nil, fmt.Errorf("read archives directory %s: %w", dir, err)
 	}
 
 	suffix := "_" + kind + ".zip"
-	var latestVersion int64 = -1
-	var latestName string
+	results := make([]ExtractResult, 0)
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), suffix) {
 			continue
 		}
 		versionText := strings.TrimSuffix(entry.Name(), suffix)
 		version, err := strconv.ParseInt(versionText, 10, 64)
-		if err != nil || version <= latestVersion {
+		if err != nil {
 			continue
 		}
-		latestVersion = version
-		latestName = entry.Name()
+		results = append(results, ExtractResult{
+			VersionID:   version,
+			ArchivePath: filepath.Join(dir, entry.Name()),
+		})
 	}
-	if latestName == "" {
-		return "", 0, fmt.Errorf("%s archive not found in %s (expected <version>_%s.zip)", kind, dir, kind)
+	if len(results) == 0 {
+		return nil, fmt.Errorf("%s archive not found in %s (expected <version>_%s.zip)", kind, dir, kind)
 	}
-	return filepath.Join(dir, latestName), latestVersion, nil
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].VersionID < results[j].VersionID
+	})
+	return results, nil
 }
 
 func extractZip(zr *zip.Reader, dest string, importedFilePrefixes []string) error {

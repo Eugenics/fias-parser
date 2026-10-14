@@ -6,6 +6,7 @@ import (
 	"gar_converter/internal/app"
 	"gar_converter/internal/config"
 	"gar_converter/internal/download"
+	"gar_converter/internal/events"
 	"gar_converter/internal/repository"
 	"os"
 	"os/signal"
@@ -22,7 +23,7 @@ const (
 	versionFileName   = "version.txt"
 )
 
-const usage = "Укажите тип загрузки: 0 - полная, 1 - дельта, 2 - распаковать полный архив, 3 - распаковать архив дельты"
+const usage = "Укажите тип загрузки: 0 - полная, 1 - дельта, 2 - распаковать полный архив, 3 - распаковать архив дельты, 5 - загрузить все дельты по порядку"
 
 func main() {
 	timeStart := time.Now()
@@ -44,6 +45,10 @@ func main() {
 	args := os.Args[1:]
 	if len(args) == 0 {
 		fmt.Println(usage)
+		return
+	}
+	if cfg.RabbitMQ.Mode == "rabbitmq" && args[0] != "5" {
+		fmt.Println("В режиме RabbitMQ используйте команду 5 для обработки очереди")
 		return
 	}
 
@@ -114,6 +119,58 @@ func main() {
 			panic(err)
 		}
 
+	case "5":
+		fmt.Println("Последовательная загрузка дельт ГАР")
+		process := func(ctx context.Context, kind string, result download.ExtractResult) error {
+			imported, err := repo.IsVersionImported(ctx, result.VersionID, kind)
+			if err != nil {
+				return err
+			}
+			if imported {
+				fmt.Printf("Версия %d (%s) уже импортирована, пропущена\n", result.VersionID, kind)
+				return nil
+			}
+			dest := XmlFilesDeltaPath
+			if kind == "full" {
+				dest = XmlFilesFullPath
+			}
+			if err := downloader.Extract(result, dest); err != nil {
+				return err
+			}
+			if err := recordExtractedVersion(ctx, repo, cfg, kind, dest, result); err != nil {
+				return err
+			}
+			if err := app.Run(ctx, dest, cfg, repo); err != nil {
+				return err
+			}
+			return markVersionImported(ctx, repo, result.VersionID, kind)
+		}
+		if cfg.RabbitMQ.Mode == "rabbitmq" {
+			err := events.Drain(ctx, cfg.RabbitMQ, func(ctx context.Context, kind string, result download.ExtractResult) error {
+				result.SourceArchivePath = result.ArchivePath
+				result.ArchivePath = filepath.Join(cfg.Fias.ArchivesDir, filepath.Base(result.ArchivePath))
+				return process(ctx, kind, result)
+			})
+			if err != nil {
+				panic(err)
+			}
+			break
+		}
+		archives, err := downloader.Archives("delta")
+		if err != nil {
+			panic(err)
+		}
+		if err := processDeltaArchives(
+			ctx,
+			archives,
+			func(ctx context.Context, versionID int64) (bool, error) {
+				return repo.IsVersionImported(ctx, versionID, "delta")
+			},
+			func(ctx context.Context, result download.ExtractResult) error { return process(ctx, "delta", result) },
+		); err != nil {
+			panic(err)
+		}
+
 	default:
 		fmt.Println(usage)
 		return
@@ -121,6 +178,28 @@ func main() {
 
 	timeEnd := time.Now()
 	fmt.Printf("Execution time: %s\n", timeEnd.Sub(timeStart))
+}
+
+func processDeltaArchives(
+	ctx context.Context,
+	archives []download.ExtractResult,
+	isImported func(context.Context, int64) (bool, error),
+	process func(context.Context, download.ExtractResult) error,
+) error {
+	for _, archive := range archives {
+		imported, err := isImported(ctx, archive.VersionID)
+		if err != nil {
+			return fmt.Errorf("проверить delta-версию %d: %w", archive.VersionID, err)
+		}
+		if imported {
+			fmt.Printf("Версия %d уже импортирована в БД, пропущена\n", archive.VersionID)
+			continue
+		}
+		if err := process(ctx, archive); err != nil {
+			return fmt.Errorf("загрузить delta-версию %d: %w", archive.VersionID, err)
+		}
+	}
+	return nil
 }
 
 func extractionBlocked(ctx context.Context, repo *repository.PostgresRepository, versionID int64, fileType string) bool {
@@ -182,14 +261,21 @@ func recordExtractedVersion(ctx context.Context, repo *repository.PostgresReposi
 		ExpDate:     time.Now().Add(cfg.Fias.ExpDelta).Format(time.RFC3339),
 	}
 	if fileType == "full" {
-		info.GarXMLFullURL = result.ArchivePath
+		info.GarXMLFullURL = versionArchivePath(result)
 	} else {
-		info.GarXMLDeltaURL = result.ArchivePath
+		info.GarXMLDeltaURL = versionArchivePath(result)
 	}
 	if err := repo.SaveVersionInfo(ctx, info, "extracted", fileType); err != nil {
 		return fmt.Errorf("записать распакованную версию: %w", err)
 	}
 	return nil
+}
+
+func versionArchivePath(result download.ExtractResult) string {
+	if result.SourceArchivePath != "" {
+		return result.SourceArchivePath
+	}
+	return result.ArchivePath
 }
 
 // versionImported reports whether the given version has already been imported

@@ -5,6 +5,10 @@ importer:
   batch_size: 1000
   workers: 4
 
+rabbitmq:
+  mode: rabbitmq # local or rabbitmq
+  queue: fias.download.completed
+
 fias:
   archives_dir: /archives
   exp_delta: 168h

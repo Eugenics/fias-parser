@@ -26,17 +26,26 @@ services:
     depends_on:
       fias-parser-postgres:
         condition: service_healthy
+    env_file:
+      - ./.env
     environment:
       TZ: ${TZ:-Asia/Novosibirsk}
-      GAR_DATABASE_DSN: postgres://${DB_USER}:${DB_PASSWORD}@postgres:5432/${DB_NAME}?sslmode=disable
+      GAR_DATABASE_DSN: postgres://${DB_USER}:${DB_PASSWORD}@fias-parser-postgres:5432/${DB_NAME}?sslmode=disable
       FULL_SCHEDULE: ${FULL_SCHEDULE:-0 2 * * 0}
-      DELTA_SCHEDULE: ${DELTA_SCHEDULE:-0 3 * * *}
+      DELTA_SCHEDULE: ${DELTA_SCHEDULE:-*/5 * * * *}
       RUN_ON_STARTUP: ${RUN_ON_STARTUP:-false}
       STARTUP_LOAD_TYPE: ${STARTUP_LOAD_TYPE:-delta}
     volumes:
       - ./parser-config.yaml:/app/configs/config.yaml:ro
       - ${FIAS_ARCHIVES_DIR:-../../fias-downloader/var/data/downloads}:/archives:ro
       - ../source/xml:/app/source/xml
+    networks:
+      - default
+      - fias-downloader-network
 
 volumes:
   fias-pgdata:
+
+networks:
+  fias-downloader-network:
+    external: true
