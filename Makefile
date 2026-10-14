@@ -31,11 +31,13 @@ help:
 	@echo "  tidy           - update Go module files"
 	@echo "  sqlc           - regenerate sqlc code"
 	@echo "  migrate-up     - apply DB migrations (starts compose stack)"
+	@echo "  migrate-docker-up - apply DB migrations using a Docker container"
 	@echo "  migrate-down   - revert last DB migration"
 	@echo "  migrate-new    - create new migration (NAME=...)"
 	@echo "  tools          - install dev tools (golangci-lint, sqlc, migrate)"
 	@echo "  docker-build   - rebuild image and recreate Compose containers"
 	@echo "  compose-up     - start docker-compose stack"
+	@echo "  compose-db-up  - start PostgreSQL and wait until healthy"
 	@echo "  compose-down   - stop docker-compose stack"
 	@echo "  compose-logs   - follow parser scheduler logs"
 	@echo "  load-full      - unpack and import latest full archive"
@@ -86,6 +88,13 @@ sqlc:
 migrate-up: compose-up
 	$(GOBIN)/migrate -path migrations -database "$(DB_URL)" up
 
+.PHONY: migrate-docker-up
+migrate-docker-up: compose-db-up
+	docker run --rm --network container:fias-postgres \
+		-v "$(CURDIR)/migrations:/migrations:ro" \
+		migrate/migrate:$(MIGRATE_VERSION) -path=/migrations \
+		-database="postgres://$(DB_USER):$(DB_PASSWORD)@127.0.0.1:5432/$(DB_NAME)?sslmode=disable" up
+
 .PHONY: migrate-down
 migrate-down:
 	$(GOBIN)/migrate -path migrations -database "$(DB_URL)" down 1
@@ -108,6 +117,10 @@ docker-build:
 .PHONY: compose-up
 compose-up:
 	docker compose -f deployments/docker-compose.yaml up -d
+
+.PHONY: compose-db-up
+compose-db-up:
+	docker compose --env-file deployments/.env -f deployments/docker-compose.yaml up -d --wait fias-parser-postgres
 
 .PHONY: compose-down
 compose-down:

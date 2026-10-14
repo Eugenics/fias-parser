@@ -64,41 +64,35 @@ docker compose --env-file deployments/.env -f deployments/docker-compose.yaml co
 ### 1. Запустить PostgreSQL
 
 ```bash
-docker compose --env-file deployments/.env -f deployments/docker-compose.yaml up -d --wait fias-parser-postgres
+make compose-db-up
 ```
 
-Порт `DB_PORT` используется для подключения с хоста. Внутри сети Docker PostgreSQL доступен на порту `5432`.
+Команда читает `deployments/.env`, запускает только PostgreSQL и ожидает его готовности. Порт `DB_PORT` используется для подключения с хоста. Внутри сети Docker PostgreSQL доступен на порту `5432`.
 
 ### 2. Применить миграции
 
 Миграции находятся в `migrations/`. Планировщик не применяет их автоматически, поэтому выполните этот шаг до первого импорта:
 
 ```bash
-docker run --rm \
-  --network container:fias-postgres \
-  -v "$PWD/migrations:/migrations:ro" \
-  migrate/migrate:v4.19.1 \
-  -path=/migrations \
-  -database='postgres://fias:fias@127.0.0.1:5432/fias?sslmode=disable' \
-  up
+make migrate-docker-up
 ```
 
-Команда использует сеть контейнера PostgreSQL. Реквизиты в `-database` должны совпадать с `DB_USER`, `DB_PASSWORD` и `DB_NAME` в `.env`. При изменении этих значений обновите строку подключения в команде.
+Команда запускает `migrate` в отдельном контейнере, используя сеть PostgreSQL. Установка Go и `migrate` на хосте не требуется. По умолчанию используются пользователь, пароль и БД `fias`, как в примере `.env`. Если реквизиты отличаются, передайте соответствующие значения переменных Make:
+
+```bash
+make migrate-docker-up DB_USER=fias DB_PASSWORD=my_password DB_NAME=fias
+```
+
+Значения должны совпадать с `deployments/.env`: Makefile не читает реквизиты миграций из этого файла автоматически.
 
 ### 3. Собрать и запустить планировщик
 
 ```bash
-docker compose --env-file deployments/.env -f deployments/docker-compose.yaml up -d --build fias-parser-scheduler
-docker compose --env-file deployments/.env -f deployments/docker-compose.yaml logs -f fias-parser-scheduler
+make docker-build
+COMPOSE_ENV_FILES="$PWD/deployments/.env" make compose-logs
 ```
 
-При `RUN_ON_STARTUP=false` первая обработка произойдёт по расписанию. Для немедленной обработки очереди в работающем контейнере:
-
-```bash
-docker compose --env-file deployments/.env -f deployments/docker-compose.yaml exec fias-parser-scheduler run-scheduled.sh delta
-```
-
-В режиме RabbitMQ эта команда импортирует и полные выгрузки, и дельты из очереди. После обработки доступных сообщений процесс завершается; следующий запуск выполняет cron.
+`make docker-build` собирает образ и пересоздаёт сервисы Compose. При `RUN_ON_STARTUP=false` первая обработка произойдёт по расписанию. В режиме RabbitMQ обрабатываются и полные выгрузки, и дельты из очереди; после обработки доступных сообщений процесс завершается до следующего запуска cron.
 
 ## Конфигурация контейнера
 
@@ -139,6 +133,12 @@ XML располагаются в каталогах регионов, а общ
 Импортируются адресные объекты, их параметры, административная иерархия и справочники из списка префиксов в YAML. Данные домов, квартир, комнат, участков и муниципальной иерархии текущий импортёр пропускает; справочники типов домов, квартир и комнат поддерживаются.
 
 ## RabbitMQ
+
+Для немедленной обработки очереди в работающем контейнере:
+
+```bash
+docker compose --env-file deployments/.env -f deployments/docker-compose.yaml exec fias-parser-scheduler run-scheduled.sh delta
+```
 
 Загрузчик должен публиковать в настроенную очередь JSON-сообщения следующего вида:
 
@@ -238,6 +238,7 @@ docker compose --env-file deployments/.env -f deployments/docker-compose.yaml up
 | --- | --- |
 | `make docker-build` | Собирает образ и пересоздаёт сервисы Compose с `--build --force-recreate`, явно читает `deployments/.env`. |
 | `make compose-up` | Запускает весь стек в фоне, включая планировщик. |
+| `make compose-db-up` | Читает `deployments/.env`, запускает только PostgreSQL и ожидает успешной проверки готовности. |
 | `make compose-down` | Останавливает и удаляет контейнеры стека, сохраняя том БД. |
 | `make compose-logs` | Показывает логи планировщика в режиме наблюдения. |
 
@@ -254,10 +255,11 @@ COMPOSE_ENV_FILES="$PWD/deployments/.env" make compose-down
 | Команда | Действие |
 | --- | --- |
 | `make migrate-up` | Сначала выполняет `compose-up`, затем применяет все ожидающие миграции локальным инструментом `migrate`. |
+| `make migrate-docker-up` | Выполняет `compose-db-up` и применяет миграции в контейнере; использует реквизиты Make `DB_USER`, `DB_PASSWORD`, `DB_NAME`. |
 | `make migrate-down` | Откатывает одну последнюю миграцию. |
 | `make migrate-new NAME=add_index` | Создаёт пару последовательных файлов миграции `.up.sql` и `.down.sql` в `migrations/`. |
 
-Эти команды требуют установленного на хосте `migrate`; путь к нему определяется через `GOBIN` (по умолчанию каталог `bin` внутри `GOPATH`). Строка подключения задаётся переменной Make `DB_URL`, по умолчанию — `postgres://fias:fias@localhost:5434/fias?sslmode=disable`. Makefile не загружает реквизиты БД из `deployments/.env` в `DB_URL`.
+Команды `migrate-up`, `migrate-down` и `migrate-new` требуют установленного на хосте `migrate`; путь к нему определяется через `GOBIN` (по умолчанию каталог `bin` внутри `GOPATH`). Для локальных миграций строка подключения задаётся переменной Make `DB_URL`, по умолчанию — `postgres://fias:fias@localhost:5434/fias?sslmode=disable`. Makefile не загружает реквизиты БД из `deployments/.env` в `DB_URL`. Контейнерная цель `migrate-docker-up` использует порт `5432` в сети PostgreSQL и не использует `DB_URL`.
 
 ```bash
 COMPOSE_ENV_FILES="$PWD/deployments/.env" make migrate-up \
